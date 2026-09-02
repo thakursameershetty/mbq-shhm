@@ -1,0 +1,1779 @@
+import { Fragment, useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Search, ChevronDown, CheckCircle2, Clock, User, Loader2, ShieldAlert, Sparkles, FileText, Trash2, X, AlertTriangle, Check, Download, AlertCircle, Edit, Plus, Wand2, MessageCircle } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
+import QuestionsModal from '../components/QuestionsModal';
+import ReportViewerModal from '../components/ReportViewerModal';
+import SmartBulkMatchModal from '../components/SmartBulkMatchModal';
+
+// Prefer the AI report's own merge timestamp (set per-report when the Python backend
+// generates it) over the shared status_timestamps.generated, which only reflects the
+// most recent report and is identical across all of a patient's reports.
+const getReportGeneratedAt = (reportData: any, fallback?: string | null) =>
+  reportData?.generated_at || reportData?.ai_report?._meta?.merged_at || fallback || null;
+
+const formatUserId = (id: any, createdAt?: string | null) => {
+  const num = parseInt(id, 10);
+  const year = createdAt ? new Date(createdAt).getFullYear() : new Date().getFullYear();
+  if (isNaN(num)) return `MBQ${id}`;
+  return `MBQ${year}${String(num).padStart(3, '0')}`;
+};
+
+const safeRender = (val: any) => {
+  if (val === null || val === undefined || val === '') return 'N/A';
+  if (typeof val === 'object') {
+    return Object.values(val).filter(Boolean).join(' - ');
+  }
+  return String(val);
+};
+
+const getGeneColor = (geneName: string) => {
+  const name = geneName.toLowerCase();
+  if (name.includes('actn3')) return 'bg-blue-50 text-blue-700 border-blue-200';
+  if (name.includes('edar')) return 'bg-purple-50 text-purple-700 border-purple-200';
+  if (name.includes('cyp1a2') || name.includes('caffeine') || name.includes('caffine')) return 'bg-amber-50 text-amber-700 border-amber-200';
+
+  return 'bg-[#F4F4F2] text-[#5A5A55] border-[#D4D4CE]';
+};
+
+const getGenePieColor = (geneName: string) => {
+  const name = geneName.toLowerCase();
+  if (name.includes('actn3')) return '#3b82f6';
+  if (name.includes('edar')) return '#a855f7';
+  if (name.includes('cyp1a2') || name.includes('caffeine') || name.includes('caffine')) return '#f59e0b';
+  return '#8B8B86';
+};
+
+
+export default function AdminVerifyPage() {
+  const [patients, setPatients] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [expandedPatientId, setExpandedPatientId] = useState<number | null>(null);
+  const [selectedGenderFilter, setSelectedGenderFilter] = useState<string>('all');
+  const [selectedSampleFilter, setSelectedSampleFilter] = useState<string>('all');
+  const [selectedDataFilter, setSelectedDataFilter] = useState<string>('all');
+  const [selectedWorkflowFilter, setSelectedWorkflowFilter] = useState<string>('all');
+  const [selectedGeneFilter, setSelectedGeneFilter] = useState<string>('all');
+  const [selectedAIReport, setSelectedAIReport] = useState<{ testName: string, reportData: any, variants: any, mbqId?: string, generatedAt?: string | null, gender?: string | null } | null>(null);
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [isMobilePieModalOpen, setIsMobilePieModalOpen] = useState(false);
+  const [isQuestionsModalOpen, setIsQuestionsModalOpen] = useState(false);
+
+  const [editingGenePatient, setEditingGenePatient] = useState<any>(null);
+  const [isSmartMatchOpen, setIsSmartMatchOpen] = useState(false);
+  const [editedGeneType, setEditedGeneType] = useState<string>('');
+  const [isUpdatingGene, setIsUpdatingGene] = useState(false);
+
+  const [autoSendWhatsApp, setAutoSendWhatsApp] = useState(() => {
+    const saved = localStorage.getItem('autoSendWhatsApp');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('autoSendWhatsApp', String(autoSendWhatsApp));
+  }, [autoSendWhatsApp]);
+
+  const handleManualWhatsApp = async (patientId: string, templateType: string, testName?: string) => {
+    setActionLoading(parseInt(patientId));
+    try {
+      const response = await fetch(`/api/admin/patients/${patientId}/notify-whatsapp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateType, testName })
+      });
+      const data = await response.json();
+      if (data.success) {
+        alert(data.message);
+      } else {
+        alert(data.error || 'Failed to send WhatsApp message');
+      }
+    } catch (error) {
+      console.error(error);
+      alert('Connection failed');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleUpdateGene = async () => {
+    if (!editingGenePatient) return;
+    setIsUpdatingGene(true);
+    try {
+      const response = await fetch(`/api/users/${editingGenePatient.id}/gene`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gene_type: editedGeneType }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setPatients(prev => prev.map(p => p.id === editingGenePatient.id ? { ...p, gene_type: editedGeneType } : p));
+        setEditingGenePatient(null);
+      } else {
+        alert(data.error || 'Failed to update gene panel');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Connection failed');
+    } finally {
+      setIsUpdatingGene(false);
+    }
+  };
+
+  const [userToDelete, setUserToDelete] = useState<any>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
+  const [verifyAction, setVerifyAction] = useState<any>(null);
+  const [deleteReportAction, setDeleteReportAction] = useState<{ id: number, name: string } | null>(null);
+
+  const [selectedUsers, setSelectedUsers] = useState<Set<number>>(new Set());
+  const [lastSelectedUserId, setLastSelectedUserId] = useState<number | null>(null);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkFetching, setIsBulkFetching] = useState(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
+
+  const confirmDeleteReport = async () => {
+    if (!deleteReportAction) return;
+    const { id: userId } = deleteReportAction;
+    setActionLoading(userId);
+    try {
+      const response = await fetch(`/api/users/${userId}/delete-report`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (data.success) {
+        fetchPatients(true);
+      } else {
+        alert(data.error || 'Failed to delete report');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Connection failed');
+    } finally {
+      setActionLoading(null);
+      setDeleteReportAction(null);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    setIsDeletingUser(true);
+    try {
+      const response = await fetch(`/api/users/${userToDelete.id}`, {
+        method: 'DELETE',
+      });
+      const data = await response.json();
+      if (data.success) {
+        setPatients((prev) => prev.filter((p) => p.id !== userToDelete.id));
+        setUserToDelete(null);
+      } else {
+        alert(data.error || 'Failed to delete user');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Connection failed');
+    } finally {
+      setIsDeletingUser(false);
+    }
+  };
+
+  const confirmVerifyReport = async () => {
+    if (!verifyAction) return;
+    const { id, testName, currentlyVerified } = verifyAction;
+    const targetStatus = !currentlyVerified;
+    setActionLoading(id);
+    try {
+      const response = await fetch(`/api/users/${id}/verify-report`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testName, reportVerified: targetStatus }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setPatients((prev) =>
+          prev.map((p) => (p.id === id ? { ...p, reports: data.user.reports, report_verified: data.user.report_verified, status_timestamps: data.user.status_timestamps } : p))
+        );
+      } else {
+        alert(data.error || 'Failed to verify report');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Connection failed');
+    } finally {
+      setActionLoading(null);
+      setVerifyAction(null);
+    }
+  };
+
+  const handleRequestSurvey = async (patientId: number, requested: boolean) => {
+    setActionLoading(patientId);
+    try {
+      const response = await fetch(`/api/users/${patientId}/request-survey`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requested })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setPatients(prev => prev.map(p => p.id === patientId ? { ...p, survey_requested: requested } : p));
+      } else {
+        alert(data.error || 'Failed to update survey request');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Connection failed');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const fetchPatients = (silent = false) => {
+    if (!silent) setLoading(true);
+    fetch('/api/admin/patients')
+      .then((res) => res.json())
+      .then((data) => {
+        setPatients(data);
+      })
+      .catch((err) => console.error('Error fetching patients:', err))
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    fetchPatients();
+    const interval = setInterval(() => fetchPatients(true), 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const toggleExpand = (id: number) => {
+    setExpandedPatientId(expandedPatientId === id ? null : id);
+  };
+
+  const filteredPatients = patients.filter((p) => {
+    if (!p) return false;
+    const searchTerms = searchQuery
+      .split(',')
+      .map(t => t.trim().toLowerCase())
+      .filter(t => t.length > 0);
+
+    const matchesSearch = searchTerms.length === 0 || searchTerms.some(term => {
+      const nameMatch = (p.full_name || '').toLowerCase().includes(term);
+      const emailMatch = (p.email || '').toLowerCase().includes(term);
+      const usernameMatch = (p.username || '').toLowerCase().includes(term);
+      const phoneMatch = (p.phone || '').includes(term);
+      const idMatch = formatUserId(p.id, p.created_at).toLowerCase().includes(term) || p.id.toString().includes(term);
+      return nameMatch || emailMatch || usernameMatch || phoneMatch || idMatch;
+    });
+
+    const matchesGender = selectedGenderFilter === 'all' || p.gender === selectedGenderFilter;
+
+    const isCollected = p.sample_collected === true;
+    const isReceived = p.sample_received === true;
+    const isUploaded = p.report_uploaded === true;
+    const isGenerated = p.report_generated === true;
+    const isVerified = p.report_verified === true;
+
+    let currentStatus = 'registered';
+    if (isVerified) currentStatus = 'verified';
+    else if (isGenerated) currentStatus = 'generated';
+    else if (isUploaded) currentStatus = 'uploaded';
+    else if (isReceived) currentStatus = 'received';
+    else if (isCollected) currentStatus = 'collected';
+
+    const matchesWorkflow = selectedWorkflowFilter === 'all' || currentStatus === selectedWorkflowFilter;
+
+    const matchesGene = selectedGeneFilter === 'all' ||
+      (p.gene_type && p.gene_type.toLowerCase().includes(selectedGeneFilter));
+
+    const matchesSample =
+      selectedSampleFilter === 'all' ||
+      (selectedSampleFilter === 'collected' && isCollected) ||
+      (selectedSampleFilter === 'pending' && !isCollected);
+
+    const matchesData =
+      selectedDataFilter === 'all' ||
+      (selectedDataFilter === 'null_data' && !p.phenotypic_analysis) ||
+      (selectedDataFilter === 'has_data' && !!p.phenotypic_analysis);
+
+    return matchesSearch && matchesGender && matchesSample && matchesData && matchesWorkflow && matchesGene;
+  });
+
+  const geneCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    filteredPatients.forEach(p => {
+      if (p.gene_type) {
+        const genes = p.gene_type.split(/,\s*(?![^(]*\))/);
+        genes.forEach((g: string) => {
+          counts[g] = (counts[g] || 0) + 1;
+        });
+      }
+    });
+    return Object.entries(counts).map(([name, value]) => ({ name, value }));
+  }, [filteredPatients]);
+
+  const toggleSelectAll = () => {
+    if (selectedUsers.size === filteredPatients.length && filteredPatients.length > 0) {
+      setSelectedUsers(new Set());
+    } else {
+      setSelectedUsers(new Set(filteredPatients.map(p => p.id)));
+    }
+  };
+
+  const toggleSelectUser = (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    if (e.shiftKey && lastSelectedUserId !== null) {
+      const currentIndex = filteredPatients.findIndex(p => p.id === id);
+      const lastIndex = filteredPatients.findIndex(p => p.id === lastSelectedUserId);
+
+      if (currentIndex !== -1 && lastIndex !== -1) {
+        const start = Math.min(currentIndex, lastIndex);
+        const end = Math.max(currentIndex, lastIndex);
+
+        const isCurrentlySelected = selectedUsers.has(id);
+
+        setSelectedUsers(prev => {
+          const newSet = new Set(prev);
+          const targetState = !isCurrentlySelected;
+
+          for (let i = start; i <= end; i++) {
+            if (targetState) {
+              newSet.add(filteredPatients[i].id);
+            } else {
+              newSet.delete(filteredPatients[i].id);
+            }
+          }
+          return newSet;
+        });
+
+        setLastSelectedUserId(id);
+        return;
+      }
+    }
+
+    setSelectedUsers(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+    setLastSelectedUserId(id);
+  };
+
+  const handleBulkDelete = async () => {
+    setIsBulkDeleting(true);
+    try {
+      const response = await fetch('/api/users/bulk', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userIds: Array.from(selectedUsers) }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setPatients(prev => prev.filter(p => !selectedUsers.has(p.id)));
+        setSelectedUsers(new Set());
+        setShowBulkDeleteModal(false);
+      } else {
+        alert(data.error || 'Failed to delete users');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Connection failed');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  const handleBulkRequestSurvey = async (requested: boolean) => {
+    setIsBulkFetching(true);
+    const userIds = Array.from(selectedUsers);
+
+    for (const id of userIds) {
+      setActionLoading(id);
+      try {
+        const response = await fetch(`/api/users/${id}/request-survey`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requested })
+        });
+        if (response.ok) {
+          setPatients(prev => prev.map(p => p.id === id ? { ...p, survey_requested: requested } : p));
+        }
+      } catch (err) {
+        console.error(`Failed to update survey request for user ${id}`, err);
+      }
+    }
+
+    alert(`Successfully ${requested ? 'requested survey for' : 'undid survey request for'} selected users.`);
+
+    setIsBulkFetching(false);
+    setActionLoading(null);
+  };
+
+  const handleDownloadCSV = () => {
+    if (patients.length === 0) return;
+
+    const headers = [
+      "ID",
+      "Username",
+      "Full Name",
+      "Email",
+      "Phone",
+      "Age",
+      "Gender",
+      "Gene Panel",
+      "Sample Collected",
+      "Sample Received",
+      "Report Uploaded",
+      "Report Generated",
+      "Report Verified",
+      "Created At"
+    ];
+
+    const escapeCSV = (str: string) => `"${str.replace(/"/g, '""')}"`;
+
+    const csvRows = patients.map(p => [
+      formatUserId(p.id, p.created_at),
+      p.username || '',
+      p.full_name ? escapeCSV(p.full_name) : '',
+      p.email || '',
+      p.phone ? escapeCSV(p.phone) : '',
+      p.age || '',
+      p.gender || '',
+      p.gene_type ? escapeCSV(p.gene_type) : '',
+      p.sample_collected ? 'Yes' : 'No',
+      p.sample_received ? 'Yes' : 'No',
+      p.report_uploaded ? 'Yes' : 'No',
+      p.report_generated ? 'Yes' : 'No',
+      p.report_verified ? 'Yes' : 'No',
+      p.created_at ? escapeCSV(new Date(p.created_at).toLocaleString()) : ''
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...csvRows.map(r => r.join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `mbq_users_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8 mx-auto"
+    >
+      {/* Header Section */}
+      <div className="mb-6 flex flex-col gap-6 relative z-10">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="space-y-2 lg:flex-1 shrink-0">
+            <motion.div
+              initial={{ y: -10, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/60 border border-[#E8E8E5] text-xs font-semibold text-[#6057D7] tracking-widest uppercase mb-2 shadow-sm backdrop-blur-md"
+            >
+              <ShieldAlert className="w-3.5 h-3.5" />
+              Admin Portal
+            </motion.div>
+            <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-[#1A1A19]">Profile Verification</h2>
+            <p className="text-[#8B8B86] text-base font-medium max-w-xl leading-relaxed">
+              Verify comprehensive user registrations, survey records, sample collection statuses, and AI-generated phenotypic data.
+            </p>
+          </div>
+
+          {/* Gene Distribution Pie Chart */}
+          <div
+            className="fixed bottom-4 left-4 z-[100] xl:static xl:flex items-center justify-center shrink-0 origin-bottom-left scale-[0.65] sm:scale-75 md:scale-90 xl:scale-100 transition-transform pointer-events-none xl:pointer-events-auto cursor-pointer xl:cursor-auto"
+            onClick={() => window.innerWidth < 1280 && setIsMobilePieModalOpen(true)}
+          >
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="flex items-center gap-4 bg-white/95 xl:bg-white/80 backdrop-blur-3xl xl:backdrop-blur-2xl border border-[#E8E8E5] px-4 py-2.5 rounded-2xl shadow-2xl xl:shadow-sm w-max shrink-0 pointer-events-auto">
+              <div className="relative w-12 h-12 shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={geneCounts}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={14}
+                      outerRadius={22}
+                      paddingAngle={2}
+                      dataKey="value"
+                      stroke="none"
+                    >
+                      {geneCounts.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={getGenePieColor(entry.name)} />
+                      ))}
+                    </Pie>
+                    <RechartsTooltip
+                      contentStyle={{ borderRadius: '8px', border: '1px solid #E8E8E5', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                      itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex flex-col justify-center pr-2">
+                <h3 className="text-[9px] font-bold uppercase tracking-widest text-[#A0A09D] mb-1.5">Gene Distribution</h3>
+                <div className="flex flex-col gap-1 text-[10px] font-semibold">
+                  {geneCounts.length > 0 ? geneCounts.map(g => (
+                    <div key={g.name} className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getGenePieColor(g.name) }} />
+                        <span className="text-[#5A5A55] whitespace-nowrap">
+                          {g.name.toLowerCase().includes('actn3') ? 'Muscle (ACTN3, ACE)' : g.name.toLowerCase().includes('edar') ? 'Hair (EDAR, FGFR2)' : 'Caffeine (CYP1A2, ADORA2A)'}
+                        </span>
+                      </div>
+                      <span className="text-[#1A1A19] font-bold">{g.value}</span>
+                    </div>
+                  )) : (
+                    <span className="text-[#8B8B86]">No data</span>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto lg:flex-1 lg:justify-end shrink-0">
+
+            {/* Core Actions (Search + Global Buttons) */}
+            <div className="flex flex-row items-center gap-3 w-full sm:w-auto">
+              <div className="relative flex-1 lg:w-64 flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#A0A09D] z-10 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="Search by name, email, id (comma separated for bulk)..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onPaste={(e) => {
+                      const pastedText = e.clipboardData.getData('text');
+                      if (pastedText.includes('\n') || pastedText.includes('\t')) {
+                        e.preventDefault();
+                        const formatted = pastedText.split(/[\n\t]+/).map(s => s.trim()).filter(Boolean).join(', ');
+                        const input = e.target as HTMLInputElement;
+                        const start = input.selectionStart || 0;
+                        const end = input.selectionEnd || 0;
+                        const newValue = searchQuery.substring(0, start) + formatted + searchQuery.substring(end);
+                        setSearchQuery(newValue);
+                      }
+                    }}
+                    className="w-full bg-white/80 backdrop-blur-xl border border-[#E8E8E5] text-sm rounded-2xl pl-4 pr-10 py-2.5 outline-none focus:ring-4 focus:ring-[#6057D7]/15 focus:border-[#6057D7]/30 transition-all shadow-sm placeholder:text-[#A0A09D] font-medium"
+                  />
+                </div>
+                <button
+                  onClick={() => setIsSmartMatchOpen(true)}
+                  className="flex items-center justify-center p-2.5 bg-purple-50 hover:bg-purple-100 text-purple-600 rounded-2xl border border-purple-200 transition-colors shadow-sm shrink-0"
+                  title="Smart Match with AI"
+                >
+                  <Wand2 className="w-5 h-5" />
+                </button>
+              </div>
+
+              <button
+                onClick={handleDownloadCSV}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-[#6057D7] to-[#3FC2AC] rounded-2xl text-sm font-semibold text-white transition-all shadow-sm shrink-0 hover:opacity-90 h-[44px]"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">Export</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <SmartBulkMatchModal
+          isOpen={isSmartMatchOpen}
+          onClose={() => setIsSmartMatchOpen(false)}
+          onMatch={(ids) => setSearchQuery(ids)}
+        />
+
+
+        {/* Secondary Actions & Filters Bar */}
+        <div className="flex flex-col sm:flex-row items-center gap-3 bg-white/40 backdrop-blur-md border border-[#E8E8E5] p-2 rounded-2xl shadow-sm">
+          <button
+            onClick={toggleSelectAll}
+            className="flex items-center justify-center gap-2 px-4 py-2 w-full sm:w-auto bg-white border border-[#E8E8E5] rounded-2xl text-xs font-bold text-[#5A5A55] hover:bg-[#F8F8F7] transition-all shadow-sm shrink-0 h-[44px]"
+          >
+            <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${selectedUsers.size === filteredPatients.length && filteredPatients.length > 0 ? 'bg-[#6057D7] border-[#6057D7] text-white' : 'border-[#D4D4CE] bg-white'}`}>
+              {selectedUsers.size === filteredPatients.length && filteredPatients.length > 0 && <Check className="w-3 h-3" />}
+            </div>
+            Select All
+          </button>
+
+          <div className="h-6 w-[1px] bg-[#E8E8E5] hidden sm:block mx-1"></div>
+
+          <div className="flex overflow-x-auto gap-2 w-full pb-1 sm:pb-0 scrollbar-hide">
+            <select
+              value={selectedWorkflowFilter}
+              onChange={(e) => setSelectedWorkflowFilter(e.target.value)}
+              className="flex-1 min-w-[140px] bg-white border border-[#E8E8E5] text-xs font-semibold text-[#5A5A55] rounded-2xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-[#6057D7]/20 cursor-pointer hover:bg-[#F8F8F7] h-[44px]"
+            >
+              <option value="all">All Stages</option>
+              <option value="registered">Registered</option>
+              <option value="collected">Sample Collected</option>
+              <option value="received">Sample Received</option>
+              <option value="uploaded">Report Uploaded</option>
+              <option value="generated">Report Generated</option>
+              <option value="verified">Report Verified</option>
+            </select>
+
+            <select
+              value={selectedGeneFilter}
+              onChange={(e) => setSelectedGeneFilter(e.target.value)}
+              className="flex-1 min-w-[140px] bg-white border border-[#E8E8E5] text-xs font-semibold text-[#5A5A55] rounded-2xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-[#6057D7]/20 cursor-pointer hover:bg-[#F8F8F7] h-[44px]"
+            >
+              <option value="all">All Gene Panels</option>
+              <option value="actn3">ACTN3, ACE (Muscle)</option>
+              <option value="edar">EDAR, FGFR2 (Hair)</option>
+              <option value="cyp1a2">CYP1A2, ADORA2A (Caffeine)</option>
+            </select>
+
+            <select
+              value={selectedGenderFilter}
+              onChange={(e) => setSelectedGenderFilter(e.target.value)}
+              className="flex-1 min-w-[120px] bg-white border border-[#E8E8E5] text-xs font-semibold text-[#5A5A55] rounded-2xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-[#6057D7]/20 cursor-pointer hover:bg-[#F8F8F7] h-[44px]"
+            >
+              <option value="all">All Genders</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+              <option value="Other">Other</option>
+            </select>
+
+            <select
+              value={selectedSampleFilter}
+              onChange={(e) => setSelectedSampleFilter(e.target.value)}
+              className="flex-1 min-w-[120px] bg-white border border-[#E8E8E5] text-xs font-semibold text-[#5A5A55] rounded-2xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-[#6057D7]/20 cursor-pointer hover:bg-[#F8F8F7] h-[44px]"
+            >
+              <option value="all">All Samples</option>
+              <option value="collected">Collected</option>
+              <option value="pending">Pending</option>
+            </select>
+
+            <select
+              value={selectedDataFilter}
+              onChange={(e) => setSelectedDataFilter(e.target.value)}
+              className="flex-1 min-w-[130px] bg-white border border-[#E8E8E5] text-xs font-semibold text-[#5A5A55] rounded-2xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-[#6057D7]/20 cursor-pointer hover:bg-[#F8F8F7] h-[44px]"
+            >
+              <option value="all">All AI Data</option>
+              <option value="has_data">Has Data</option>
+              <option value="false">Phenotypic Pending</option>
+            </select>
+
+            <button
+              onClick={() => setIsQuestionsModalOpen(true)}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-[#E8E8E5] rounded-2xl text-xs font-semibold text-[#5A5A55] transition-all shadow-sm shrink-0 hover:bg-[#F8F8F7] h-[44px]"
+            >
+              <Edit className="w-4 h-4" />
+              <span className="hidden sm:inline">Select Questions</span>
+            </button>
+            <button
+              onClick={() => setAutoSendWhatsApp(!autoSendWhatsApp)}
+              className={`flex items-center justify-center gap-2 px-4 py-2.5 border rounded-2xl text-xs font-semibold transition-all shadow-sm shrink-0 h-[44px] ${autoSendWhatsApp ? 'bg-[#ECFDF3] text-[#027A48] border-[#027A48]/20' : 'bg-white text-[#8B8B86] border-[#E8E8E5] hover:bg-[#F9F9F8]'}`}
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span className="hidden sm:inline">Auto-WhatsApp {autoSendWhatsApp ? 'ON' : 'OFF'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="relative">
+        <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-gradient-to-tr from-[#6057D7]/5 to-[#3FC2AC]/5 rounded-full blur-[100px] -z-10 pointer-events-none mix-blend-multiply" />
+
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20">
+            <Loader2 className="animate-spin text-[#6057D7] mb-4" size={40} />
+            <p className="text-[#8B8B86] text-sm font-medium">Loading verify records...</p>
+          </div>
+        ) : filteredPatients.length === 0 ? (
+          <div className="text-center py-20 bg-white/40 backdrop-blur-md border border-[#E8E8E5] rounded-3xl p-8">
+            <User className="w-12 h-12 text-[#A0A09D] mx-auto mb-4" />
+            <h3 className="text-lg font-bold text-[#1A1A19]">No profiles found</h3>
+            <p className="text-sm text-[#8B8B86] mt-1">Try modifying your filters or search terms.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {filteredPatients.map((patient, i) => {
+              const isExpanded = expandedPatientId === patient.id;
+              const isCollected = patient.sample_collected === true;
+              const genesList = patient.gene_type ? patient.gene_type.split(/,\s*(?![^(]*\))/) : [];
+              const analysis = patient.phenotypic_analysis;
+
+              return (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Math.min(i * 0.04, 0.4) }}
+                  key={patient.id}
+                  className={`bg-white/70 backdrop-blur-2xl border ${isExpanded ? 'border-[#6057D7]/30 shadow-md ring-4 ring-[#6057D7]/5' : 'border-white/80 shadow-sm'
+                    } rounded-[20px] overflow-hidden transition-all duration-300 hover:shadow-md hover:bg-white/90`}
+                >
+                  {/* Summary Header bar */}
+                  <div
+                    onClick={() => toggleExpand(patient.id)}
+                    className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between cursor-pointer gap-4 relative z-10"
+                  >
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <button
+                        onClick={(e) => toggleSelectUser(patient.id, e)}
+                        className={`w-5 h-5 rounded flex items-center justify-center border transition-colors shrink-0 ${selectedUsers.has(patient.id) ? 'bg-[#6057D7] border-[#6057D7] text-white' : 'border-[#D4D4CE] bg-white hover:border-[#6057D7]'}`}
+                      >
+                        {selectedUsers.has(patient.id) && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                      <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#F4F4F2] to-[#E8E8E5] border border-[#D4D4CE] flex items-center justify-center text-base font-bold text-[#1A1A19] shadow-inner shrink-0">
+                        {patient.full_name?.charAt(0).toUpperCase() || 'U'}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-[#1A1A19] text-base truncate flex items-center gap-2">
+                          {patient.full_name?.toUpperCase()}
+                        </div>
+                        <div className="text-xs font-mono font-medium text-[#8B8B86] mt-0.5 flex items-center gap-1.5">
+                          <User className="w-3 h-3" />
+                          ID: {formatUserId(patient.id, patient.created_at)} ({patient.username})
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Meta Info Indicators */}
+                    <div className="flex flex-wrap lg:flex-nowrap items-center gap-4 lg:gap-6 mt-3 lg:mt-0">
+                      {/* Genotypes badges */}
+                      <div className="flex flex-col w-[260px] xl:w-[320px] shrink-0">
+                        <span className="text-[9px] uppercase tracking-widest font-bold text-[#A0A09D] mb-1 block">Gene Panel</span>
+                        <div className="flex flex-row flex-wrap items-center gap-1.5">
+                          {genesList.map((g: string, idx: number) => (
+                            <span
+                              key={idx}
+                              className={`px-2 py-1 rounded-md text-[9.5px] font-bold border leading-none ${getGeneColor(g)}`}
+                            >
+                              {g}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Contact metadata */}
+                      <div className="flex flex-col text-xs text-[#5A5A55] w-[180px] xl:w-[200px] shrink-0">
+                        <span className="text-[9px] uppercase tracking-widest font-bold text-[#A0A09D] mb-1">Contact</span>
+                        <span className="font-semibold">{patient.email}</span>
+                      </div>
+
+                      {/* Sample Collected status badge */}
+                      <div className="flex flex-col w-[90px] shrink-0">
+                        <span className="text-[9px] uppercase tracking-widest font-bold text-[#A0A09D] mb-1">Sample Status</span>
+                        <div>
+                          {isCollected ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#ECFDF3] text-[#027A48] text-[9px] font-bold uppercase tracking-wider">
+                              <CheckCircle2 className="w-3 h-3" /> Collected
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#FFF5E5] text-[#B87A00] text-[9px] font-bold uppercase tracking-wider">
+                              <Clock className="w-3 h-3 animate-pulse" /> Pending
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Edit button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingGenePatient(patient);
+                            setEditedGeneType(patient.gene_type || '');
+                          }}
+                          className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-500 rounded-full transition-colors border border-indigo-100"
+                          title="Edit User"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+
+                        {/* Collect Answers button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRequestSurvey(patient.id, !patient.survey_requested);
+                          }}
+                          disabled={actionLoading === patient.id}
+                          className={`p-1.5 rounded-full transition-colors border ${patient.survey_requested ? 'bg-amber-50 hover:bg-amber-100 text-amber-600 border-amber-100' : 'bg-green-50 hover:bg-green-100 text-green-600 border-green-100'}`}
+                          title={patient.survey_requested ? "Cancel Survey Request" : "Collect Answers"}
+                        >
+                          {actionLoading === patient.id ? <Loader2 className="w-4 h-4 animate-spin" /> : patient.survey_requested ? <FileText className="w-4 h-4 opacity-60" /> : <FileText className="w-4 h-4" />}
+                        </button>
+
+                        {/* Delete button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setUserToDelete(patient);
+                          }}
+                          className="p-1.5 bg-red-50 hover:bg-red-100 text-red-500 rounded-full transition-colors border border-red-100"
+                          title="Delete User"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Chevron indicator */}
+                      <motion.div
+                        animate={{ rotate: isExpanded ? 180 : 0 }}
+                        className="p-1.5 bg-[#F4F4F2] rounded-full text-[#5A5A55]"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </motion.div>
+                    </div>
+                  </div>
+
+                  {/* Expandable Details Pane */}
+                  <AnimatePresence>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3, ease: 'easeInOut' }}
+                        className="overflow-hidden border-t border-[#E8E8E5] bg-gradient-to-b from-[#F9F9F8] to-white"
+                      >
+                        <div className="p-6 space-y-6">
+                          {/* Top Row: User Summary Metadata */}
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-4 rounded-2xl border border-[#E8E8E5] shadow-inner">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-[#8B8B86] block">Full Legal Name</span>
+                              <span className="font-semibold text-sm text-[#1A1A19]">{patient.full_name?.toUpperCase()}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-[#8B8B86] block">Email</span>
+                              <span className="font-semibold text-sm text-[#1A1A19]">{patient.email}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-[#8B8B86] block">Phone</span>
+                              <span className="font-semibold text-sm text-[#1A1A19]">{patient.phone || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-[#8B8B86] block">Age & Gender</span>
+                              <span className="font-semibold text-sm text-[#1A1A19]">
+                                {patient.age ? `${patient.age} yrs` : 'N/A'} • {patient.gender || 'N/A'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Phenotypic Data Header */}
+                          <div className="flex items-center gap-2 border-b border-[#F0F0ED] pb-2">
+                            <Sparkles className="w-4 h-4 text-[#6057D7]" />
+                            <h4 className="text-xs font-extrabold uppercase tracking-wider text-[#1A1A19]">
+                              AI Phenotypic Profile Insights
+                            </h4>
+                          </div>
+
+                          {analysis ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                              {/* Personal Profile Section */}
+                              {analysis.personal_profile && (
+                                <div className="bg-white p-5 rounded-2xl border border-[#E8E8E5] shadow-sm">
+                                  <h5 className="text-xs font-bold text-[#6057D7] uppercase tracking-wider mb-3">
+                                    Personal Profile
+                                  </h5>
+                                  <div className="space-y-2.5 text-xs">
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Daily Activity:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.personal_profile.dailyActivity)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-[#8B8B86]">Sleep Timing:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.personal_profile.sleepTiming)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Caffeine Response Section */}
+                              {analysis.caffeine_response && (
+                                <div className="bg-white p-5 rounded-2xl border border-[#E8E8E5] shadow-sm">
+                                  <h5 className="text-xs font-bold text-[#6057D7] uppercase tracking-wider mb-3">
+                                    Caffeine & Stimulant Response
+                                  </h5>
+                                  <div className="space-y-2.5 text-xs">
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Sleep Impact:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.caffeine_response.sleepImpact)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Duration of Effect:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.caffeine_response.durationOfEffect)}
+                                      </span>
+                                    </div>
+                                    {typeof analysis.caffeine_response.sensitivity === 'object' && analysis.caffeine_response.sensitivity !== null ? (
+                                      <>
+                                        <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                          <span className="text-[#8B8B86]">Physical Sensitivity:</span>
+                                          <span className="font-semibold text-[#1A1A19]">
+                                            {safeRender(analysis.caffeine_response.sensitivity.physicalSensitivity || analysis.caffeine_response.sensitivity.physical)}
+                                          </span>
+                                        </div>
+                                        <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                          <span className="text-[#8B8B86]">Small Dose Sensitivity:</span>
+                                          <span className="font-semibold text-[#1A1A19]">
+                                            {safeRender(analysis.caffeine_response.sensitivity.smallDoseSensitivity || analysis.caffeine_response.sensitivity.smallDose)}
+                                          </span>
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                        <span className="text-[#8B8B86]">Sensitivity:</span>
+                                        <span className="font-semibold text-[#1A1A19]">
+                                          {safeRender(analysis.caffeine_response.sensitivity)}
+                                        </span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between">
+                                      <span className="text-[#8B8B86]">Tolerance:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.caffeine_response.tolerance)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Hair & Scalp Section */}
+                              {analysis.hair_scalp_characteristics && (
+                                <div className="bg-white p-5 rounded-2xl border border-[#E8E8E5] shadow-sm">
+                                  <h5 className="text-xs font-bold text-[#6057D7] uppercase tracking-wider mb-3">
+                                    Hair & Scalp Characteristics
+                                  </h5>
+                                  <div className="space-y-2.5 text-xs">
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Thickness:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.hair_scalp_characteristics.thickness)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Texture:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.hair_scalp_characteristics.texture)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Scalp Type:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.hair_scalp_characteristics.scalpType)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Sweating:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.hair_scalp_characteristics.sweating)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-[#8B8B86]">Stability:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.hair_scalp_characteristics.stability)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Physical Performance Section */}
+                              {analysis.physical_performance && (
+                                <div className="bg-white p-5 rounded-2xl border border-[#E8E8E5] shadow-sm">
+                                  <h5 className="text-xs font-bold text-[#6057D7] uppercase tracking-wider mb-3">
+                                    Physical Performance & Recovery
+                                  </h5>
+                                  <div className="space-y-2.5 text-xs">
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Power/Explosiveness:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.physical_performance.power)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Endurance:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.physical_performance.endurance)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Muscle Adaptation:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.physical_performance.muscleAdaptation)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-[#F0F0ED] pb-1.5">
+                                      <span className="text-[#8B8B86]">Recovery:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.physical_performance.recovery)}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-[#8B8B86]">Training Preference:</span>
+                                      <span className="font-semibold text-[#1A1A19]">
+                                        {safeRender(analysis.physical_performance.trainingPreference)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="py-5 bg-white border border-amber-200 rounded-2xl">
+                              <div className="flex items-start gap-3 px-5 py-1">
+                                <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                                <div>
+                                  <p className="text-xs font-semibold text-amber-800">No phenotypic data</p>
+                                  <p className="text-[11px] text-amber-600 mt-0.5">
+                                    This patient hasn't completed the in-app questionnaire yet.
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Actions Panel */}
+                          <div className="flex flex-wrap items-center gap-3 pt-4 border-t border-[#F0F0ED]">
+                            {patient.reports && Object.keys(patient.reports).length > 0 ? (
+                              <>
+                                {Object.entries(patient.reports).map(([geneName, reportData]: [string, any]) => (
+                                  <div key={geneName} className="flex flex-col sm:flex-row gap-2">
+                                    {reportData.url && reportData.url !== '#' && (
+                                      <button
+                                        onClick={() => setPreviewPdfUrl(reportData.url)}
+                                        className="flex items-center gap-2 px-4 py-2 bg-white/85 hover:bg-white border border-[#E8E8E5] text-[#1A1A19] rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                                      >
+                                        <FileText size={14} className="text-[#6057D7]" />
+                                        View {geneName} Report
+                                      </button>
+                                    )}
+                                    {reportData.ai_report && (
+                                      <button
+                                        onClick={() => setSelectedAIReport({ testName: geneName, reportData: reportData.ai_report, variants: reportData.variants, mbqId: formatUserId(patient.id, patient.created_at), generatedAt: getReportGeneratedAt(reportData, patient.status_timestamps?.generated), gender: patient.gender })}
+                                        className="flex items-center gap-2 px-4 py-2 bg-amber-100/80 hover:bg-amber-200 border border-amber-200 text-amber-700 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                                      >
+                                        <Sparkles size={14} />
+                                        View {geneName} HTML Report
+                                      </button>
+                                    )}
+                                    {reportData.ai_report && (
+                                      <button
+                                        onClick={() => setVerifyAction({ ...patient, testName: geneName, currentlyVerified: !!reportData.verified })}
+                                        disabled={actionLoading === patient.id}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer ${reportData.verified
+                                          ? 'bg-[#027A48] hover:bg-[#026c3f] text-white'
+                                          : 'bg-gradient-to-r from-[#6057D7] to-[#3FC2AC] hover:opacity-90 text-white'
+                                          }`}
+                                      >
+                                        {actionLoading === patient.id ? (
+                                          <Loader2 className="animate-spin w-3.5 h-3.5" />
+                                        ) : reportData.verified ? (
+                                          `✓ ${geneName} Verified`
+                                        ) : (
+                                          `Verify ${geneName} Report`
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                                {patient.status_timestamps?.uploaded && (new Date().getTime() - new Date(patient.status_timestamps.uploaded).getTime() <= 10 * 60 * 1000) && (
+                                  <button
+                                    onClick={() => setDeleteReportAction({ id: patient.id, name: patient.full_name || patient.username })}
+                                    disabled={actionLoading === patient.id}
+                                    className="flex items-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 border border-red-100 text-red-600 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                                  >
+                                    {actionLoading === patient.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                                    Delete Report
+                                  </button>
+                                )}
+                              </>
+                            ) : patient.report_uploaded && patient.report_url ? (
+                              <>
+                                <button
+                                  onClick={() => setPreviewPdfUrl(patient.report_url)}
+                                  className="flex items-center gap-2 px-4 py-2 bg-white/85 hover:bg-white border border-[#E8E8E5] text-[#1A1A19] rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                                >
+                                  <FileText size={14} className="text-[#6057D7]" />
+                                  View Legacy Report
+                                </button>
+                                {patient.status_timestamps?.uploaded && (new Date().getTime() - new Date(patient.status_timestamps.uploaded).getTime() <= 10 * 60 * 1000) && (
+                                  <button
+                                    onClick={() => setDeleteReportAction({ id: patient.id, name: patient.full_name || patient.username })}
+                                    disabled={actionLoading === patient.id}
+                                    className="flex items-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 border border-red-100 text-red-600 rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                                  >
+                                    {actionLoading === patient.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                                    Delete Report
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              <button
+                                disabled
+                                className="flex items-center gap-2 px-4 py-2 bg-[#F7F7F5] border border-[#E8E8E5] text-[#8B8B86] rounded-xl text-xs font-bold cursor-not-allowed"
+                              >
+                                <FileText size={14} />
+                                No Uploaded Report
+                              </button>
+                            )}
+
+                            {/* Verification is now per test — see the "Verify {test} Report" buttons above, one per entry in patient.reports */}
+                          </div>
+
+                          {/* Manual WhatsApp Notification Buttons */}
+                          <div className="flex flex-wrap items-center gap-3 pt-3">
+                            {patient.sample_received && (
+                              <button
+                                onClick={() => handleManualWhatsApp(patient.id, 'sample_collected')}
+                                disabled={actionLoading === patient.id}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#ECFDF3] text-[#027A48] hover:bg-[#D1FADF] rounded-lg text-xs font-bold border border-[#027A48]/20 transition-colors disabled:opacity-50"
+                              >
+                                {actionLoading === patient.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                                Send WA: Sample Collected
+                              </button>
+                            )}
+                            {patient.reports && Object.keys(patient.reports).length > 0
+                              ? Object.entries(patient.reports).map(([geneName, reportData]: [string, any]) => (
+                                reportData.ai_report && (
+                                  <Fragment key={geneName}>
+                                    <button
+                                      onClick={() => handleManualWhatsApp(patient.id, 'report_generated', geneName)}
+                                      disabled={actionLoading === patient.id}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#ECFDF3] text-[#027A48] hover:bg-[#D1FADF] rounded-lg text-xs font-bold border border-[#027A48]/20 transition-colors disabled:opacity-50"
+                                    >
+                                      {actionLoading === patient.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                                      Send WA: {geneName} Generated
+                                    </button>
+                                    {reportData.verified && (
+                                      <button
+                                        onClick={() => handleManualWhatsApp(patient.id, 'report_ready', geneName)}
+                                        disabled={actionLoading === patient.id}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#ECFDF3] text-[#027A48] hover:bg-[#D1FADF] rounded-lg text-xs font-bold border border-[#027A48]/20 transition-colors disabled:opacity-50"
+                                      >
+                                        {actionLoading === patient.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                                        Send WA: {geneName} Ready
+                                      </button>
+                                    )}
+                                  </Fragment>
+                                )
+                              ))
+                              : patient.report_uploaded && (
+                                <>
+                                  <button
+                                    onClick={() => handleManualWhatsApp(patient.id, 'report_generated')}
+                                    disabled={actionLoading === patient.id}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#ECFDF3] text-[#027A48] hover:bg-[#D1FADF] rounded-lg text-xs font-bold border border-[#027A48]/20 transition-colors disabled:opacity-50"
+                                  >
+                                    {actionLoading === patient.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                                    Send WA: Report Generated
+                                  </button>
+                                  <button
+                                    onClick={() => handleManualWhatsApp(patient.id, 'report_ready')}
+                                    disabled={actionLoading === patient.id}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#ECFDF3] text-[#027A48] hover:bg-[#D1FADF] rounded-lg text-xs font-bold border border-[#027A48]/20 transition-colors disabled:opacity-50"
+                                  >
+                                    {actionLoading === patient.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                                    Send WA: Report Ready
+                                  </button>
+                                </>
+                              )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {userToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/20 backdrop-blur-sm"
+              onClick={() => !isDeletingUser && setUserToDelete(null)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative w-full max-w-md bg-white rounded-3xl shadow-xl border border-[#E8E8E5] overflow-hidden z-10"
+            >
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <button
+                    onClick={() => !isDeletingUser && setUserToDelete(null)}
+                    className="p-2 text-[#8B8B86] hover:text-[#1A1A19] transition-colors rounded-full hover:bg-[#F4F4F2]"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <h3 className="text-xl font-bold text-[#1A1A19] mb-2">Delete User Profile</h3>
+                <p className="text-[#5A5A55] text-sm mb-6">
+                  Are you sure you want to completely delete the profile for <span className="font-bold text-[#1A1A19]">{userToDelete.full_name}</span>? This action is permanent and cannot be undone.
+                </p>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setUserToDelete(null)}
+                    disabled={isDeletingUser}
+                    className="flex-1 px-4 py-2.5 bg-white border border-[#E8E8E5] text-[#1A1A19] font-bold text-sm rounded-xl hover:bg-[#F4F4F2] transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleDeleteUser}
+                    disabled={isDeletingUser}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl transition-colors disabled:opacity-50 shadow-sm"
+                  >
+                    {isDeletingUser ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                    {isDeletingUser ? 'Deleting...' : 'Delete Profile'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* Verify Confirmation Modal */}
+      <AnimatePresence>
+        {verifyAction && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/20 backdrop-blur-sm"
+              onClick={() => !actionLoading && setVerifyAction(null)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative w-full max-w-md bg-white rounded-3xl shadow-xl border border-[#E8E8E5] overflow-hidden z-10"
+            >
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${verifyAction.currentlyVerified ? 'bg-orange-100 text-orange-600' : 'bg-green-100 text-green-600'}`}>
+                    <ShieldAlert className="w-5 h-5" />
+                  </div>
+                  <button
+                    onClick={() => !actionLoading && setVerifyAction(null)}
+                    className="p-2 text-[#8B8B86] hover:text-[#1A1A19] transition-colors rounded-full hover:bg-[#F4F4F2]"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <h3 className="text-xl font-bold text-[#1A1A19] mb-2">{verifyAction.currentlyVerified ? 'Unverify' : 'Verify'} {verifyAction.testName} Report</h3>
+                <p className="text-[#5A5A55] text-sm mb-6">
+                  Are you sure you want to {verifyAction.currentlyVerified ? 'unverify' : 'verify'} the <span className="font-bold text-[#1A1A19]">{verifyAction.testName}</span> report for <span className="font-bold text-[#1A1A19]">{verifyAction.full_name}</span>?
+                </p>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setVerifyAction(null)}
+                    disabled={actionLoading === verifyAction.id}
+                    className="flex-1 px-4 py-2.5 bg-white border border-[#E8E8E5] text-[#1A1A19] font-bold text-sm rounded-xl hover:bg-[#F4F4F2] transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmVerifyReport}
+                    disabled={actionLoading === verifyAction.id}
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-white font-bold text-sm rounded-xl transition-colors disabled:opacity-50 shadow-sm ${verifyAction.currentlyVerified ? 'bg-orange-600 hover:bg-orange-700' : 'bg-green-600 hover:bg-green-700'}`}
+                  >
+                    {actionLoading === verifyAction.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4" />
+                    )}
+                    {actionLoading === verifyAction.id ? 'Processing...' : 'Confirm'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Bulk Delete Modal */}
+      <AnimatePresence>
+        {showBulkDeleteModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/20 backdrop-blur-sm"
+              onClick={() => !isBulkDeleting && setShowBulkDeleteModal(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="relative w-full max-w-md bg-white rounded-3xl shadow-xl border border-[#E8E8E5] overflow-hidden z-10"
+            >
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <button
+                    onClick={() => !isBulkDeleting && setShowBulkDeleteModal(false)}
+                    className="p-2 text-[#8B8B86] hover:text-[#1A1A19] transition-colors rounded-full hover:bg-[#F4F4F2]"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <h3 className="text-xl font-bold text-[#1A1A19] mb-2">Delete {selectedUsers.size} Users</h3>
+                <p className="text-[#5A5A55] text-sm mb-6">
+                  Are you sure you want to permanently delete the {selectedUsers.size} selected user profiles? This action cannot be undone.
+                </p>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowBulkDeleteModal(false)}
+                    disabled={isBulkDeleting}
+                    className="flex-1 px-4 py-2.5 bg-white border border-[#E8E8E5] text-[#1A1A19] font-bold text-sm rounded-xl hover:bg-[#F4F4F2] transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleBulkDelete}
+                    disabled={isBulkDeleting}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl transition-colors disabled:opacity-50 shadow-sm"
+                  >
+                    {isBulkDeleting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                    {isBulkDeleting ? 'Deleting...' : 'Delete All'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Floating Action Bar for Bulk Selection */}
+      <AnimatePresence>
+        {selectedUsers.size > 0 && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="fixed bottom-4 sm:bottom-8 left-1/2 -translate-x-1/2 z-40 w-[95%] sm:w-auto max-w-full overflow-x-auto bg-[#1A1A19] text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl shadow-[0_10px_40px_rgb(0,0,0,0.2)] border border-white/10 flex items-center gap-3 sm:gap-6"
+          >
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="flex items-center justify-center bg-[#333331] text-[#A0A09D] font-mono text-sm font-bold rounded-lg h-7 min-w-[28px] px-2">
+                {selectedUsers.size}
+              </div>
+              <span className="text-white text-sm font-medium hidden sm:block">profiles selected</span>
+
+              <button
+                onClick={() => setSelectedUsers(new Set())}
+                disabled={isBulkFetching}
+                className="p-1.5 hover:bg-[#333331] rounded-lg transition-colors border border-transparent hover:border-white/10 disabled:opacity-60 shrink-0 ml-1 flex items-center justify-center text-[#A0A09D] hover:text-white"
+                title="Clear Selections"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="w-px h-6 bg-white/15 shrink-0" />
+            <div className="flex items-center gap-2 shrink-0">
+              {patients.filter(p => selectedUsers.has(p.id)).some(p => !p.survey_requested) && (
+                <button
+                  onClick={() => handleBulkRequestSurvey(true)}
+                  disabled={isBulkFetching}
+                  className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-green-500 hover:bg-green-600 text-white text-xs sm:text-sm font-bold rounded-xl transition-colors disabled:opacity-60 whitespace-nowrap shrink-0"
+                >
+                  {isBulkFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                  Collect Answers
+                </button>
+              )}
+              {patients.filter(p => selectedUsers.has(p.id)).some(p => p.survey_requested) && (
+                <button
+                  onClick={() => handleBulkRequestSurvey(false)}
+                  disabled={isBulkFetching}
+                  className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white text-xs sm:text-sm font-bold rounded-xl transition-colors disabled:opacity-60 whitespace-nowrap shrink-0"
+                >
+                  {isBulkFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
+                  Undo Request
+                </button>
+              )}
+              <div className="w-px h-6 bg-white/15 mx-1 shrink-0 hidden sm:block" />
+              <button
+                onClick={() => setShowBulkDeleteModal(true)}
+                disabled={isBulkFetching}
+                className="p-2 bg-red-500 hover:bg-red-600 text-white rounded-xl transition-colors disabled:opacity-60 shrink-0"
+                title="Delete Selected"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* PDF Preview Modal */}
+      <AnimatePresence>
+        {previewPdfUrl && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => setPreviewPdfUrl(null)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-5xl h-[85vh] bg-white rounded-3xl shadow-2xl overflow-hidden z-10 flex flex-col"
+            >
+              <div className="flex items-center justify-between p-4 border-b border-[#E8E8E5] bg-[#F9F9F8]">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#6057D7]/10 flex items-center justify-center">
+                    <FileText className="w-5 h-5 text-[#6057D7]" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-[#1A1A19]">Document Preview</h3>
+                    <p className="text-xs text-[#8B8B86]">Uploaded Genomic Report</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={previewPdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-3 py-2 bg-white border border-[#E8E8E5] text-[#1A1A19] rounded-lg text-xs font-bold hover:bg-[#F4F4F2] transition-colors"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download PDF
+                  </a>
+                  <button
+                    onClick={() => setPreviewPdfUrl(null)}
+                    className="p-2 text-[#8B8B86] hover:text-[#1A1A19] hover:bg-[#E8E8E5] rounded-xl transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 w-full bg-[#F4F4F2] relative">
+                {/* Fallback link if iframe fails or is blocked */}
+                <div className="absolute inset-0 flex items-center justify-center -z-10 text-[#8B8B86] text-sm">
+                  Loading preview...
+                </div>
+                <iframe
+                  src={`${previewPdfUrl}#toolbar=0&navpanes=0&scrollbar=0`}
+                  title="PDF Preview"
+                  className="w-full h-full border-none relative z-10"
+                />
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Patient Modal */}
+      <AnimatePresence>
+        {editingGenePatient && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setEditingGenePatient(null)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden z-10"
+            >
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">
+                      {editingGenePatient.full_name?.charAt(0) || 'U'}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-[#1A1A19]">{editingGenePatient.full_name}</h3>
+                      <div className="text-xs text-[#8B8B86]">{formatUserId(editingGenePatient.id, editingGenePatient.created_at)}</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setEditingGenePatient(null)}
+                    className="p-2 text-[#8B8B86] hover:bg-[#F4F4F2] rounded-full transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="bg-[#F4F4F2] p-3 rounded-xl mb-6">
+                  <div className="text-xs text-[#5A5A55]">
+                    <span className="font-semibold text-[#1A1A19]">Email:</span> {editingGenePatient.email || 'N/A'}
+                  </div>
+                  <div className="text-xs text-[#5A5A55] mt-1">
+                    <span className="font-semibold text-[#1A1A19]">Phone:</span> {editingGenePatient.phone || 'N/A'}
+                  </div>
+                </div>
+
+                <div className="mb-6">
+                  <label className="text-xs font-bold text-[#8B8B86] uppercase tracking-wider mb-2 block">Gene Panel Configuration</label>
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-row flex-wrap gap-2">
+                      {/* Selected Genes */}
+                      {editedGeneType.split(/,\s*(?![^(]*\))/).map(g => g.trim()).filter(Boolean).map((g, idx) => (
+                        <span
+                          key={idx}
+                          className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold border leading-none cursor-pointer hover:opacity-80 transition-opacity ${getGeneColor(g)}`}
+                          onClick={() => {
+                            const genes = editedGeneType.split(/,\s*(?![^(]*\))/).map(x => x.trim()).filter(Boolean);
+                            setEditedGeneType(genes.filter(x => x !== g).join(', '));
+                          }}
+                        >
+                          {g}
+                          <X size={12} className="opacity-70 hover:opacity-100" />
+                        </span>
+                      ))}
+
+                      {/* Unselected Genes */}
+                      {[
+                        { short: 'ACTN3', full: 'Muscle Power vs Endurance (ACTN3,ACE)' },
+                        { short: 'EDAR', full: 'Hair Thickness & Root Structure (EDAR,FGFR2)' },
+                        { short: 'CYP1A2', full: 'Caffeine Response (CYP1A2,ADORA2A)' }
+                      ].filter(ag => !(editedGeneType || '').toUpperCase().includes(ag.short)).map((ag, idx) => (
+                        <span
+                          key={`add-${idx}`}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold border border-dashed border-[#D4D4CE] text-[#8B8B86] leading-none cursor-pointer hover:bg-[#F4F4F2] hover:text-[#5A5A55] transition-all"
+                          onClick={() => {
+                            const genes = editedGeneType ? editedGeneType.split(/,\s*(?![^(]*\))/).map(x => x.trim()).filter(Boolean) : [];
+                            setEditedGeneType([...genes, ag.full].join(', '));
+                          }}
+                        >
+                          {ag.full}
+                          <Plus size={12} className="opacity-70" />
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setEditingGenePatient(null)}
+                    disabled={isUpdatingGene}
+                    className="flex-1 py-2.5 px-4 rounded-xl border border-[#D4D4CE] text-[#5A5A55] font-semibold text-sm hover:bg-[#F4F4F2] transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleUpdateGene}
+                    disabled={isUpdatingGene}
+                    className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-[#6057D7] text-white font-semibold text-sm hover:bg-[#4F46BA] transition-colors disabled:opacity-50"
+                  >
+                    {isUpdatingGene ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Report Confirmation Modal */}
+      <AnimatePresence>
+        {deleteReportAction && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeleteReportAction(null)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-[24px] shadow-2xl overflow-hidden z-10"
+            >
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center text-red-500">
+                    <Trash2 className="w-6 h-6" />
+                  </div>
+                  <button
+                    onClick={() => setDeleteReportAction(null)}
+                    className="p-2 text-[#8B8B86] hover:bg-[#F4F4F2] rounded-full transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <h3 className="text-xl font-bold text-[#1A1A19] mb-2">Delete Genomic Report</h3>
+                <p className="text-[#5A5A55] text-sm mb-6">
+                  Are you sure you want to delete the uploaded report for <span className="font-bold text-[#1A1A19]">{deleteReportAction.name}</span>? <br /><br />
+                  This action cannot be undone.
+                </p>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setDeleteReportAction(null)}
+                    disabled={!!actionLoading}
+                    className="flex-1 px-4 py-2.5 bg-white border border-[#E8E8E5] text-[#1A1A19] font-bold text-sm rounded-xl hover:bg-[#F4F4F2] transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmDeleteReport}
+                    disabled={!!actionLoading}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl transition-colors disabled:opacity-50 shadow-sm"
+                  >
+                    {actionLoading === deleteReportAction.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                    {actionLoading === deleteReportAction.id ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Mobile Pie Chart Modal */}
+      <AnimatePresence>
+        {isMobilePieModalOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 xl:hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMobilePieModalOpen(false)}
+              className="absolute inset-0 bg-[#1A1A19]/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl border border-[#E8E8E5] p-6 z-10"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-[#1A1A19]">Gene Distribution</h3>
+                <button
+                  onClick={() => setIsMobilePieModalOpen(false)}
+                  className="p-2 text-[#8B8B86] hover:bg-[#F4F4F2] rounded-full transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex justify-center mb-6">
+                <div className="relative w-40 h-40">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={geneCounts}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={70}
+                        paddingAngle={2}
+                        dataKey="value"
+                        stroke="none"
+                      >
+                        {geneCounts.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={getGenePieColor(entry.name)} />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip
+                        contentStyle={{ borderRadius: '8px', border: '1px solid #E8E8E5', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                        itemStyle={{ fontSize: '12px', fontWeight: 'bold' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 text-sm font-semibold">
+                {geneCounts.length > 0 ? geneCounts.map(g => (
+                  <div key={g.name} className="flex items-center justify-between gap-4 p-3 bg-[#F9F9F8] rounded-xl border border-[#E8E8E5]">
+                    <div className="flex items-center gap-3">
+                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: getGenePieColor(g.name) }} />
+                      <span className="text-[#5A5A55]">
+                        {g.name.toLowerCase().includes('actn3') ? 'Muscle (ACTN3, ACE)' : g.name.toLowerCase().includes('edar') ? 'Hair (EDAR, FGFR2)' : 'Caffeine (CYP1A2, ADORA2A)'}
+                      </span>
+                    </div>
+                    <span className="text-[#1A1A19] font-bold text-base">{g.value}</span>
+                  </div>
+                )) : (
+                  <div className="text-center text-[#A0A09D] py-4">No data</div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <QuestionsModal
+        isOpen={isQuestionsModalOpen}
+        onClose={() => setIsQuestionsModalOpen(false)}
+      />
+
+      {/* HTML Report Modal */}
+      {selectedAIReport && (
+        <ReportViewerModal
+          isOpen={!!selectedAIReport}
+          onClose={() => setSelectedAIReport(null)}
+          testName={selectedAIReport.testName}
+          reportData={selectedAIReport.reportData}
+          geneVariants={selectedAIReport.variants}
+          mbqId={selectedAIReport.mbqId}
+          generatedAt={selectedAIReport.generatedAt}
+          gender={selectedAIReport.gender}
+        />
+      )}
+    </motion.div >
+  );
+}
