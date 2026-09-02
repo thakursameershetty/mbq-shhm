@@ -133,8 +133,13 @@ app.get('/api/auth/check-email', async (req, res) => {
     if (!email) {
       return res.status(400).json({ error: 'Email is required' });
     }
-    const result = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    res.json({ exists: result.rows.length > 0 });
+    const result = await pool.query('SELECT request_status FROM users WHERE email = $1', [email]);
+    const exists = result.rows.length > 0;
+    // At least one profile under this email has cleared admin approval — used by
+    // the login page to decide whether the OTP flow should even be offered.
+    const hasApproved = result.rows.some((r) => r.request_status === 'accepted');
+    const allRejected = exists && result.rows.every((r) => r.request_status === 'rejected');
+    res.json({ exists, hasApproved, allRejected });
   } catch (error) {
     console.error('Error checking email:', error);
     res.status(500).json({ error: 'Server error' });
@@ -324,6 +329,49 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Admin Request Approval Route (accept/reject a newly registered user, i.e.
+// the payment-verification checkpoint before the Volunteer stage unlocks)
+// ─────────────────────────────────────────────────────────────────────────────
+app.put('/api/users/:id/request-status', async (req, res) => {
+  const userId = req.params.id;
+  const { status } = req.body;
+
+  if (status !== 'accepted' && status !== 'rejected') {
+    return res.status(400).json({ error: "status must be 'accepted' or 'rejected'." });
+  }
+
+  try {
+    const query = `
+      UPDATE users
+      SET request_status = $1
+      WHERE id = $2
+      RETURNING id;
+    `;
+    const result = await pool.query(query, [status, userId]);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    await updateStatusTimestamp(userId, status, true);
+
+    const updatedUserRes = await pool.query(`
+      SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested,
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+      FROM users WHERE id = $1
+    `, [userId]);
+
+    res.json({
+      success: true,
+      user: updatedUserRes.rows[0]
+    });
+  } catch (error) {
+    console.error('Update Request Status Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Login Route
 // ─────────────────────────────────────────────────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
@@ -349,7 +397,7 @@ app.post('/api/auth/login', async (req, res) => {
     const query = `
       SELECT 
         id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-        sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+        request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
       FROM users
       WHERE LOWER(email) = LOWER($1)
     `;
@@ -359,15 +407,28 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(404).json({ error: 'Invalid username or email.' });
     }
 
-    if (result.rowCount === 1) {
+    // Only profiles the admin has accepted may log in — a pending/rejected
+    // registration hasn't cleared the payment-verification checkpoint yet.
+    const approvedUsers = result.rows.filter((u) => u.request_status === 'accepted');
+
+    if (approvedUsers.length === 0) {
+      const allRejected = result.rows.every((u) => u.request_status === 'rejected');
+      return res.status(403).json({
+        error: allRejected
+          ? "We weren't able to verify your registration. Please contact our support team for help."
+          : 'Please wait for the admin to verify your payment and registration. You can log in once your request has been approved.'
+      });
+    }
+
+    if (approvedUsers.length === 1) {
       res.json({
         success: true,
-        user: result.rows[0]
+        user: approvedUsers[0]
       });
     } else {
       res.json({
         success: true,
-        users: result.rows
+        users: approvedUsers
       });
     }
   } catch (error) {
@@ -389,7 +450,7 @@ app.put('/api/users/:id', async (req, res) => {
       SET full_name = $1, email = $2, phone = $3, age = $4, phenotypic_analysis = $5
       WHERE id = $6
       RETURNING id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-                sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at;
+                request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at;
     `;
     const result = await pool.query(query, [full_name, email, phone, age, JSON.stringify(phenotypic_analysis), userId]);
 
@@ -420,7 +481,7 @@ app.put('/api/users/:id/gene', async (req, res) => {
       SET gene_type = $1
       WHERE id = $2
       RETURNING id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-                sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at;
+                request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at;
     `;
     const result = await pool.query(query, [gene_type, userId]);
 
@@ -448,7 +509,7 @@ app.get('/api/users/:id', async (req, res) => {
   try {
     const query = `
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
       FROM users WHERE id = $1
     `;
     const result = await pool.query(query, [userId]);
@@ -485,7 +546,7 @@ app.post('/api/users/:id/lifestyle', async (req, res) => {
       )
       WHERE id = $3
       RETURNING id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested,
-                sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at;
+                request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at;
     `;
     const result = await pool.query(query, [dailyActivity, sleepTiming, userId]);
     if (result.rowCount === 0) {
@@ -506,7 +567,7 @@ app.get('/api/users/by-email/:email', async (req, res) => {
   try {
     const query = `
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
       FROM users WHERE LOWER(email) = LOWER($1)
       ORDER BY id ASC
     `;
@@ -524,7 +585,7 @@ app.get('/api/admin/patients', async (req, res) => {
     const query = `
       SELECT 
         id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-        sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+        request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
       FROM users
       ORDER BY created_at DESC;
     `;
@@ -547,7 +608,7 @@ app.post('/api/admin/smart-bulk-match', async (req, res) => {
 
   try {
     const query = `
-      SELECT id, full_name, email, phone, username, sample_received
+      SELECT id, full_name, email, phone, username, sample_received, created_at
       FROM users;
     `;
     const result = await pool.query(query);
@@ -566,7 +627,8 @@ app.post('/api/admin/smart-bulk-match', async (req, res) => {
         id: u.id,
         full_name: u.full_name,
         username: u.username,
-        sample_received: u.sample_received
+        sample_received: u.sample_received,
+        created_at: u.created_at
       }));
 
     res.json({ success: true, matched_users: matchedUsers, matched_ids: matchedIds, unmatched_names: unmatchedNames });
@@ -658,7 +720,7 @@ app.put('/api/users/:id/sample-collected', async (req, res) => {
     // Fetch updated user
     const updatedUserRes = await pool.query(`
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
       FROM users WHERE id = $1
     `, [userId]);
 
@@ -705,7 +767,7 @@ app.put('/api/users/:id/sample-received', async (req, res) => {
     // Fetch updated user
     const updatedUserRes = await pool.query(`
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
       FROM users WHERE id = $1
     `, [userId]);
 
@@ -912,7 +974,7 @@ app.post('/api/users/:id/upload-report', upload.single('report'), async (req, re
     // Fetch updated user
     const updatedUserRes = await pool.query(`
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
       FROM users WHERE id = $1
     `, [userId]);
 
@@ -1036,7 +1098,7 @@ app.put('/api/users/:id/verify-report', async (req, res) => {
     // Fetch updated user
     const updatedUserRes = await pool.query(`
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested,
-             sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
       FROM users WHERE id = $1
     `, [userId]);
 
@@ -1066,7 +1128,7 @@ app.post('/api/users/:id/request-survey', express.json(), async (req, res) => {
   const requested = req.body.requested !== undefined ? req.body.requested : true;
   try {
     const result = await pool.query(
-      `UPDATE users SET survey_requested = $1 WHERE id = $2 RETURNING id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at`,
+      `UPDATE users SET survey_requested = $1 WHERE id = $2 RETURNING id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at`,
       [requested, userId]
     );
     if (result.rowCount === 0) {

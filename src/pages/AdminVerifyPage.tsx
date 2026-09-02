@@ -5,6 +5,8 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } 
 import QuestionsModal from '../components/QuestionsModal';
 import ReportViewerModal from '../components/ReportViewerModal';
 import SmartBulkMatchModal from '../components/SmartBulkMatchModal';
+import { formatUserId, getGeneColor, getGenePieColor, GENE_CATALOG } from '@/lib/mbq';
+import AdminNav from '@/components/AdminNav';
 
 // Prefer the AI report's own merge timestamp (set per-report when the Python backend
 // generates it) over the shared status_timestamps.generated, which only reflects the
@@ -12,36 +14,12 @@ import SmartBulkMatchModal from '../components/SmartBulkMatchModal';
 const getReportGeneratedAt = (reportData: any, fallback?: string | null) =>
   reportData?.generated_at || reportData?.ai_report?._meta?.merged_at || fallback || null;
 
-const formatUserId = (id: any, createdAt?: string | null) => {
-  const num = parseInt(id, 10);
-  const year = createdAt ? new Date(createdAt).getFullYear() : new Date().getFullYear();
-  if (isNaN(num)) return `MBQ${id}`;
-  return `MBQ${year}${String(num).padStart(3, '0')}`;
-};
-
 const safeRender = (val: any) => {
   if (val === null || val === undefined || val === '') return 'N/A';
   if (typeof val === 'object') {
     return Object.values(val).filter(Boolean).join(' - ');
   }
   return String(val);
-};
-
-const getGeneColor = (geneName: string) => {
-  const name = geneName.toLowerCase();
-  if (name.includes('actn3')) return 'bg-blue-50 text-blue-700 border-blue-200';
-  if (name.includes('edar')) return 'bg-purple-50 text-purple-700 border-purple-200';
-  if (name.includes('cyp1a2') || name.includes('caffeine') || name.includes('caffine')) return 'bg-amber-50 text-amber-700 border-amber-200';
-
-  return 'bg-[#F4F4F2] text-[#5A5A55] border-[#D4D4CE]';
-};
-
-const getGenePieColor = (geneName: string) => {
-  const name = geneName.toLowerCase();
-  if (name.includes('actn3')) return '#3b82f6';
-  if (name.includes('edar')) return '#a855f7';
-  if (name.includes('cyp1a2') || name.includes('caffeine') || name.includes('caffine')) return '#f59e0b';
-  return '#8B8B86';
 };
 
 
@@ -474,6 +452,8 @@ export default function AdminVerifyPage() {
       animate={{ opacity: 1 }}
       className="w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8 mx-auto"
     >
+      <AdminNav />
+
       {/* Header Section */}
       <div className="mb-6 flex flex-col gap-6 relative z-10">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -530,7 +510,7 @@ export default function AdminVerifyPage() {
                       <div className="flex items-center gap-1.5">
                         <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getGenePieColor(g.name) }} />
                         <span className="text-[#5A5A55] whitespace-nowrap">
-                          {g.name.toLowerCase().includes('actn3') ? 'Muscle (ACTN3, ACE)' : g.name.toLowerCase().includes('edar') ? 'Hair (EDAR, FGFR2)' : 'Caffeine (CYP1A2, ADORA2A)'}
+                          {g.name}
                         </span>
                       </div>
                       <span className="text-[#1A1A19] font-bold">{g.value}</span>
@@ -1575,20 +1555,18 @@ export default function AdminVerifyPage() {
                       ))}
 
                       {/* Unselected Genes */}
-                      {[
-                        { short: 'ACTN3', full: 'Muscle Power vs Endurance (ACTN3,ACE)' },
-                        { short: 'EDAR', full: 'Hair Thickness & Root Structure (EDAR,FGFR2)' },
-                        { short: 'CYP1A2', full: 'Caffeine Response (CYP1A2,ADORA2A)' }
-                      ].filter(ag => !(editedGeneType || '').toUpperCase().includes(ag.short)).map((ag, idx) => (
+                      {GENE_CATALOG.flatMap(cat => cat.options)
+                        .filter(opt => !editedGeneType.split(/,\s*(?![^(]*\))/).map(x => x.trim()).includes(opt.label))
+                        .map((opt, idx) => (
                         <span
                           key={`add-${idx}`}
                           className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold border border-dashed border-[#D4D4CE] text-[#8B8B86] leading-none cursor-pointer hover:bg-[#F4F4F2] hover:text-[#5A5A55] transition-all"
                           onClick={() => {
                             const genes = editedGeneType ? editedGeneType.split(/,\s*(?![^(]*\))/).map(x => x.trim()).filter(Boolean) : [];
-                            setEditedGeneType([...genes, ag.full].join(', '));
+                            setEditedGeneType([...genes, opt.label].join(', '));
                           }}
                         >
-                          {ag.full}
+                          {opt.label}
                           <Plus size={12} className="opacity-70" />
                         </span>
                       ))}

@@ -4,24 +4,7 @@ import { ChevronDown, ArrowLeft, Loader2, CheckCircle2, AlertCircle, ScrollText,
 import { motion, AnimatePresence } from 'framer-motion';
 import { triggerHaptic } from '@/lib/utils';
 import { theme } from '../theme';
-
-import img1 from '../assets/illustations/1.png';
-import img2 from '../assets/illustations/2.png';
-import img3 from '../assets/illustations/3.png';
-import img4 from '../assets/illustations/4.png';
-import img5 from '../assets/illustations/5.png';
-import img6 from '../assets/illustations/6.png';
-import img8 from '../assets/illustations/8.png';
-
-const TUTORIAL_IMAGES = [
-  img1,
-  img2,
-  img3,
-  img4,
-  img5,
-  img6,
-  img8,
-];
+import { GENE_CATALOG } from '@/lib/mbq';
 
 // ── Terms & Conditions Modal ────────────────────────────────────────────────
 function TermsModal({
@@ -308,23 +291,6 @@ function TermsModal({
   );
 }
 
-const TUTORIAL_STEPS = [
-  { title: "Before You Begin", desc: ["Do not eat, drink, smoke, or chew gum for at least 30 minutes before collecting the sample.", "Wash your hands thoroughly."] },
-  { title: "Step 1: Open the Swab", desc: ["Carefully open the sterile swab packet.", "Hold the swab by the handle. Do not touch the soft cotton tip."] },
-  { title: "Step 2: Swab the Left Cheek", desc: ["Place the swab inside your mouth.", "Rub the swab firmly against the inside of your left cheek.", "Continue for 15–20 seconds minimum.", "Avoid touching your tongue."], timer: 20 },
-  { title: "Step 3: Swab the Right Cheek", desc: ["Using the same swab, rub the inside of your right cheek.", "Continue for 15–20 seconds minimum.", "Again, avoid touching your tongue."], timer: 20 },
-  { title: "Step 4: Place Swab in Collection Tube", desc: ["Open the pre-labeled collection tube containing the solution.", "Immediately place the swab tip into the tube."] },
-  { title: "Step 5: Mix the Sample", desc: ["Close the tube if required.", "Gently swirl or rotate the swab in the solution for about 10 seconds."], timer: 10 },
-  { title: "Step 6: Seal the Tube", desc: ["Tightly close the collection tube cap.", "Ensure it is securely sealed."] },
-  { title: "Step 7: Pack for Return", desc: ["Place the sealed collection tube into the provided zip pouch.", "Seal the pouch.", "Return the sample according to the kit instructions."] },
-];
-
-const GENE_OPTIONS = [
-  "Caffeine Response (CYP1A2,ADORA2A)",
-  "Muscle Power vs Endurance (ACTN3,ACE)",
-  "Hair Thickness & Root Structure (EDAR,FGFR2)"
-];
-
 export default function RegisterPage() {
   const navigate = useNavigate();
 
@@ -339,13 +305,7 @@ export default function RegisterPage() {
   const [showTerms, setShowTerms] = useState(false);
   const [showGeneSelection, setShowGeneSelection] = useState(false);
   const [pendingConsent, setPendingConsent] = useState(false);
-  const [tutorialStep, setTutorialStep] = useState(0);
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
-  const [backendFinished, setBackendFinished] = useState(false);
-  const [waitingForBackend, setWaitingForBackend] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ type: 'error' | 'success', text: string } | null>(null);
-  const [postTutorialAction, setPostTutorialAction] = useState<'login' | 'stay'>('stay');
-  const [showThankYou, setShowThankYou] = useState(false);
   const [showPendingScreen, setShowPendingScreen] = useState(false);
   const [usernameExists, setUsernameExists] = useState(false);
   const [checkingUsername, setCheckingUsername] = useState(false);
@@ -366,14 +326,7 @@ export default function RegisterPage() {
   const [isEmailVerified, setIsEmailVerified] = useState(false);
   const [verifyingOtp, setVerifyingOtp] = useState(false);
 
-  const [selectedGenes, setSelectedGenes] = useState<string[]>(['']);
-
-  // Countdown timer logic for tutorial steps
-  useEffect(() => {
-    if (timeLeft === null || timeLeft === 0) return;
-    const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [timeLeft]);
+  const [selectedGenes, setSelectedGenes] = useState<string[]>([]);
 
   // Countdown timer logic for OTP resend
   useEffect(() => {
@@ -475,36 +428,10 @@ export default function RegisterPage() {
   }, [formData.email]);
 
 
-  // Navigate automatically once the user finishes the tutorial AND the backend finishes
-  useEffect(() => {
-    if (waitingForBackend && backendFinished) {
-      if (postTutorialAction === 'stay') {
-        setLoading(false);
-      } else {
-        setShowThankYou(true);
-      }
-    }
-  }, [waitingForBackend, backendFinished, postTutorialAction]);
-
-  const handleFinishTutorial = () => {
-    triggerHaptic('medium');
-    if (backendFinished) {
-      if (postTutorialAction === 'stay') {
-        setLoading(false);
-      } else {
-        setShowThankYou(true);
-      }
-    } else {
-      setWaitingForBackend(true);
-    }
+  const toggleGene = (label: string) => {
+    triggerHaptic('light');
+    setSelectedGenes((prev) => prev.includes(label) ? prev.filter((g) => g !== label) : [...prev, label]);
   };
-
-  const handleDispatchConfirmed = () => {
-    setLoading(false);
-    setShowThankYou(false);
-    if (postTutorialAction === 'login') setShowPendingScreen(true);
-  };
-
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     let val = e.target.value;
@@ -668,32 +595,32 @@ export default function RegisterPage() {
       });
 
       const data = await response.json();
-      setBackendFinished(true);
 
       if (response.status === 429) {
         setToastMessage({ type: 'error', text: data.message });
-        setPostTutorialAction('stay');
+        setLoading(false);
         return;
       }
 
       if (response.status === 409) {
         setToastMessage({ type: 'error', text: data.message || 'User already exists. Please login.' });
-        setPostTutorialAction('login');
+        setLoading(false);
+        setShowPendingScreen(true);
         return;
       }
 
       if (data.success) {
         setToastMessage({ type: 'success', text: 'Profile mapped and data linked successfully!' });
-        setPostTutorialAction('login');
+        setLoading(false);
+        setShowPendingScreen(true);
       } else {
         setToastMessage({ type: 'error', text: data.error || data.message || 'Registration failed' });
-        setPostTutorialAction('stay');
+        setLoading(false);
       }
     } catch (error) {
       console.error('Network Error', error);
       setToastMessage({ type: 'error', text: 'Could not connect to the server.' });
-      setBackendFinished(true);
-      setPostTutorialAction('stay');
+      setLoading(false);
     }
   };
 
@@ -746,14 +673,14 @@ export default function RegisterPage() {
                 </div>
               </div>
 
-              <h2 className={theme.heading}>Sample Pending</h2>
+              <h2 className={theme.heading}>Awaiting Admin Approval</h2>
               <p className="text-sm text-[#8B8B86] text-center mb-6 leading-relaxed">
-                The sample is being collected. Please wait for the status to change to <strong className="text-[#1A1A19]">"Sample Collected"</strong>.
+                Your registration and payment are being verified by our team. We'll notify you once your request is <strong className="text-[#1A1A19]">approved</strong> and a volunteer is assigned for sample collection.
               </p>
 
               <div className="bg-[#F7F7F5] border border-[#E8E8E5] rounded-xl p-4 mb-8 text-center shadow-inner">
                 <p className="text-sm text-[#5A5A55]">
-                  You will receive an email at <strong className="text-[#1A1A19]">{formData.email}</strong> once the status is updated. <br /><br />
+                  You will receive an email at <strong className="text-[#1A1A19]">{formData.email}</strong> once your request is reviewed. <br /><br />
                   <span className="text-[#6057D7] font-semibold">Please check your spam email folder!</span>
                 </p>
               </div>
@@ -776,7 +703,7 @@ export default function RegisterPage() {
     <>
       {renderToast()}
 
-      {/* Full Page Interactive Loading Overlay */}
+      {/* Full Page Loading Overlay — shown while the registration request is submitted */}
       <AnimatePresence>
         {loading && (
           <motion.div
@@ -788,111 +715,11 @@ export default function RegisterPage() {
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="bg-white rounded-3xl p-6 md:p-8 shadow-2xl max-w-lg w-full border border-[#E8E8E5] relative overflow-y-auto max-h-[90vh]"
+              className="bg-white rounded-3xl p-8 shadow-2xl max-w-sm w-full border border-[#E8E8E5] flex flex-col items-center justify-center py-12"
             >
-
-              {showThankYou ? (
-                <div className="flex flex-col items-center justify-center py-8 text-center px-4">
-                  <div className="w-16 h-16 bg-gradient-to-br from-[#6057D7] to-[#3FC2AC] rounded-full flex items-center justify-center mb-6 shadow-lg">
-                    <CheckCircle2 size={32} className="text-white" />
-                  </div>
-                  <h3 className="text-2xl font-bold text-[#1A1A19] mb-3">Thank You!</h3>
-                  <p className="text-sm text-[#8B8B86] mb-8 leading-relaxed max-w-sm mx-auto">
-                    Your phenotypic profile has been successfully linked. Please confirm that you have securely packed and dispatched your DNA sample as per the instructions.
-                  </p>
-                  <button
-                    onClick={handleDispatchConfirmed}
-                    className="w-full bg-gradient-to-r from-[#6057D7] to-[#3FC2AC] text-white px-8 py-3.5 rounded-xl font-semibold shadow-md hover:shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
-                  >
-                    <CheckCircle2 size={18} /> I have dispatched the sample
-                  </button>
-                </div>
-              ) : waitingForBackend ? (
-                <div className="flex flex-col items-center justify-center py-12">
-                  <Loader2 className="animate-spin text-[#6057D7] mb-4" size={48} />
-                  <h3 className="text-xl font-bold text-[#1A1A19]">Finishing up...</h3>
-                  <p className="text-sm text-[#8B8B86] mt-2 text-center">Your phenotypic profile is almost ready.</p>
-                </div>
-              ) : (
-                <>
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg md:text-xl font-bold text-[#1A1A19]">Tutorial: Sample Collection</h3>
-                    <button onClick={handleFinishTutorial} className="text-sm text-[#8B8B86] hover:text-[#1A1A19] underline font-medium">
-                      Skip Tutorial
-                    </button>
-                  </div>
-
-                  <div className="w-56 h-56 md:w-64 md:h-64 mx-auto mb-6 flex items-center justify-center overflow-hidden">
-                    <img
-                      src={TUTORIAL_IMAGES[Math.min(tutorialStep, TUTORIAL_IMAGES.length - 1)]}
-                      alt={`Step ${tutorialStep}`}
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
-
-                  <div className="min-h-[140px]">
-                    <h4 className="font-bold text-lg mb-3 text-[#6057D7]">{TUTORIAL_STEPS[tutorialStep].title}</h4>
-                    <ul className="space-y-3 mb-6">
-                      {TUTORIAL_STEPS[tutorialStep].desc.map((descLine, i) => (
-                        <li key={i} className="text-sm text-[#1A1A19] flex gap-3">
-                          <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#3FC2AC] flex-shrink-0" />
-                          <span className="leading-relaxed">{descLine}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  {TUTORIAL_STEPS[tutorialStep].timer && (
-                    <div className="mb-6 flex justify-center h-12">
-                      {timeLeft === null ? (
-                        <button onClick={() => setTimeLeft(TUTORIAL_STEPS[tutorialStep].timer!)} className="bg-gradient-to-r from-[#6057D7] to-[#4B44B3] text-white px-8 py-2 rounded-full text-sm font-semibold shadow-md hover:shadow-lg transition-all active:scale-95">
-                          Start {TUTORIAL_STEPS[tutorialStep].timer}s Timer
-                        </button>
-                      ) : (
-                        <div className="text-3xl font-extrabold text-[#1A1A19] flex items-center gap-3">
-                          {timeLeft > 0 ? <Loader2 className="animate-spin text-[#3FC2AC]" size={28} /> : <CheckCircle2 className="text-[#3FC2AC]" size={28} />}
-                          <span className={timeLeft === 0 ? "text-[#3FC2AC]" : ""}>00:{timeLeft.toString().padStart(2, '0')}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {!TUTORIAL_STEPS[tutorialStep].timer && <div className="h-12 mb-6" />}
-
-                  <div className="flex flex-wrap sm:flex-nowrap justify-center sm:justify-between items-center mt-6 pt-6 border-t border-[#E8E8E5] gap-4">
-                    <button
-                      disabled={tutorialStep === 0}
-                      onClick={() => { setTutorialStep(prev => prev - 1); setTimeLeft(null); }}
-                      className={`px-5 py-2.5 rounded-xl font-medium text-sm transition-colors w-full sm:w-auto text-center order-2 sm:order-1 ${tutorialStep === 0 ? 'text-transparent cursor-default' : 'text-[#8B8B86] hover:bg-[#F7F7F5] active:scale-95'}`}
-                    >
-                      Previous
-                    </button>
-
-                    <div className="flex gap-1.5 order-1 sm:order-2 w-full sm:w-auto justify-center mb-2 sm:mb-0">
-                      {TUTORIAL_STEPS.map((_, i) => (
-                        <div key={i} className={`w-2 h-2 rounded-full transition-colors ${i === tutorialStep ? 'bg-[#6057D7]' : 'bg-[#E8E8E5]'}`} />
-                      ))}
-                    </div>
-
-                    {tutorialStep < TUTORIAL_STEPS.length - 1 ? (
-                      <button
-                        onClick={() => { setTutorialStep(prev => prev + 1); setTimeLeft(null); }}
-                        className="px-6 py-2.5 bg-[#F7F7F5] rounded-xl font-semibold text-[#1A1A19] hover:bg-[#E8E8E5] text-sm transition-colors active:scale-95 w-full sm:w-auto order-3"
-                      >
-                        Next
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleFinishTutorial}
-                        className="px-6 py-2.5 bg-gradient-to-r from-[#6057D7] to-[#3FC2AC] text-white rounded-xl font-semibold text-sm hover:opacity-90 flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all w-full sm:w-auto order-3"
-                      >
-                        {(!backendFinished) && <Loader2 className="animate-spin" size={16} />}
-                        Complete
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
+              <Loader2 className="animate-spin text-[#6057D7] mb-4" size={48} />
+              <h3 className="text-xl font-bold text-[#1A1A19]">Submitting your registration...</h3>
+              <p className="text-sm text-[#8B8B86] mt-2 text-center">This will only take a moment.</p>
             </motion.div>
           </motion.div>
         )}
@@ -912,7 +739,7 @@ export default function RegisterPage() {
         )}
       </AnimatePresence>
 
-      {/* Gene Selection — shown after Terms are accepted, before the sample-collection tutorial */}
+      {/* Gene Selection — shown after Terms are accepted, before submitting for admin approval */}
       <AnimatePresence>
         {showGeneSelection && (
           <motion.div
@@ -926,78 +753,60 @@ export default function RegisterPage() {
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 80, opacity: 0 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="relative w-full sm:max-w-md bg-white rounded-t-[28px] sm:rounded-[24px] shadow-2xl p-6 sm:p-8"
+              className="relative w-full sm:max-w-md bg-white rounded-t-[28px] sm:rounded-[24px] shadow-2xl p-6 sm:p-8 max-h-[92vh] overflow-y-auto"
             >
-              <h2 className={theme.heading}>Select Your Genes</h2>
-              <p className={theme.subheading}>Choose the test(s) your DNA sample will be analyzed for.</p>
+              <h2 className={theme.heading}>Select Your Tests</h2>
+              <p className={theme.subheading}>Choose the test(s) your DNA sample will be analyzed for. You can select as many as you like.</p>
 
-              <div className="text-left">
-                {selectedGenes.map((gene, index) => (
-                  <div key={index} className="flex gap-2 items-center mb-3">
-                    <div className="relative flex-1">
-                      <select
-                        value={gene}
-                        onChange={(e) => {
-                          const newGenes = [...selectedGenes];
-                          newGenes[index] = e.target.value;
-                          setSelectedGenes(newGenes);
-                        }}
-                        className={`${theme.input} !mb-0 appearance-none cursor-pointer w-full`}
-                        required
-                      >
-                        <option value="" disabled>Select Gene Type</option>
-                        {GENE_OPTIONS.map((opt) => (
-                          <option
-                            key={opt}
-                            value={opt}
-                            disabled={selectedGenes.some((val, idx) => idx !== index && val === opt)}
+              <div className="text-left space-y-5 mb-2">
+                {GENE_CATALOG.map((category) => (
+                  <div key={category.name}>
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-[#8B8B86] mb-2 pl-1">{category.name}</h3>
+                    <div className="flex flex-col gap-2">
+                      {category.options.map((opt, optIdx) => {
+                        const checked = selectedGenes.includes(opt.label);
+                        return (
+                          <label
+                            key={opt.label}
+                            onClick={(e) => { e.preventDefault(); toggleGene(opt.label); }}
+                            className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer transition-all duration-200 ${checked
+                              ? 'border-[#6057D7] bg-[#6057D7]/8 ring-4 ring-[#6057D7]/10'
+                              : 'border-[#E8E8E5] bg-white/50 hover:border-[#D0D0CE]'
+                              }`}
                           >
-                            {opt}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="absolute right-4 top-[18px] pointer-events-none text-[#8B8B86]">
-                        <ChevronDown size={16} strokeWidth={2.5} />
-                      </div>
+                            <div
+                              className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all flex-shrink-0 ${checked ? 'bg-[#6057D7] border-[#6057D7]' : 'border-[#D0D0CE]'
+                                }`}
+                            >
+                              {checked && <CheckCircle2 size={12} className="text-white" strokeWidth={3} />}
+                            </div>
+                            <span className="text-sm text-[#1A1A19] flex-1">{opt.label}</span>
+                            {opt.tier === 'pro' ? (
+                              <span className="text-[9px] font-bold uppercase tracking-wider text-[#6057D7] bg-[#6057D7]/10 px-2 py-0.5 rounded-full shrink-0">
+                                Pro
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-bold uppercase tracking-wider text-[#8B8B86] bg-[#8B8B86]/10 px-2 py-0.5 rounded-full shrink-0">
+                                Lite {optIdx + 1}
+                              </span>
+                            )}
+                          </label>
+                        );
+                      })}
                     </div>
-                    {index > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newGenes = selectedGenes.filter((_, idx) => idx !== index);
-                          setSelectedGenes(newGenes);
-                        }}
-                        className="p-3 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl border border-red-200 transition-colors flex items-center justify-center shrink-0"
-                        title="Remove selection"
-                        style={{ height: '54px', width: '54px' }}
-                      >
-                        <X size={18} />
-                      </button>
-                    )}
-                    {index === selectedGenes.length - 1 && selectedGenes.length < GENE_OPTIONS.length && gene !== '' && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedGenes([...selectedGenes, ''])}
-                        className="p-3 bg-[#3FC2AC]/10 hover:bg-[#3FC2AC]/15 text-[#138a6a] rounded-xl border border-[#3FC2AC]/20 transition-all flex items-center justify-center shrink-0 font-bold"
-                        title="Add another genotype selection"
-                        style={{ height: '54px', width: '54px' }}
-                      >
-                        +
-                      </button>
-                    )}
                   </div>
                 ))}
               </div>
 
               <motion.button
-                whileHover={selectedGenes.every(g => g !== '') ? { scale: 1.02 } : {}}
-                whileTap={selectedGenes.every(g => g !== '') ? { scale: 0.98 } : {}}
-                disabled={!selectedGenes.every(g => g !== '')}
+                whileHover={selectedGenes.length > 0 ? { scale: 1.02 } : {}}
+                whileTap={selectedGenes.length > 0 ? { scale: 0.98 } : {}}
+                disabled={selectedGenes.length === 0}
                 onClick={() => {
                   setShowGeneSelection(false);
                   handleSubmit(pendingConsent);
                 }}
-                className={`w-full font-medium tracking-wide rounded-xl px-4 py-4 mt-2 transition-all duration-300 ${selectedGenes.every(g => g !== '')
+                className={`w-full font-medium tracking-wide rounded-xl px-4 py-4 mt-2 transition-all duration-300 ${selectedGenes.length > 0
                   ? 'bg-gradient-to-r from-[#6057D7] to-[#3FC2AC] hover:opacity-90 text-white shadow-[0_4px_20px_rgb(96,87,215,0.25)] active:scale-[0.98]'
                   : 'bg-[#F0F0ED] text-[#8B8B86] cursor-not-allowed'
                   }`}

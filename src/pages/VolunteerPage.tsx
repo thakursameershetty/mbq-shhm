@@ -2,21 +2,8 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, CheckCircle2, Clock, User, Phone, Mail, Calendar, Activity, Loader2, Edit, X, Plus, Check, Wand2 } from 'lucide-react';
 import SmartBulkMatchModal from '../components/SmartBulkMatchModal';
-
-const formatUserId = (id: any) => {
-  const num = parseInt(id, 10);
-  if (isNaN(num)) return `MBQ${id}`;
-  return `MBQ${String(num).padStart(3, '0')}`;
-};
-
-const getGeneColor = (geneName: string) => {
-  const name = geneName.toLowerCase();
-  if (name.includes('actn3')) return 'bg-blue-50 text-blue-700 border-blue-200';
-  if (name.includes('edar')) return 'bg-purple-50 text-purple-700 border-purple-200';
-  if (name.includes('cyp1a2') || name.includes('caffeine') || name.includes('caffine')) return 'bg-amber-50 text-amber-700 border-amber-200';
-
-  return 'bg-[#F4F4F2] text-[#5A5A55] border-[#D4D4CE]';
-};
+import { formatUserId, getGeneColor, GENE_CATALOG } from '@/lib/mbq';
+import AdminNav from '@/components/AdminNav';
 
 export default function VolunteerPage() {
   const [patients, setPatients] = useState<any[]>([]);
@@ -107,6 +94,10 @@ export default function VolunteerPage() {
   };
 
   const filteredPatients = patients.filter((patient) => {
+    // Only patients whose request has been accepted by admin are visible for
+    // sample collection — pending/rejected registrations stay hidden here.
+    if (patient.request_status !== 'accepted') return false;
+
     const searchTerms = searchQuery
       .split(',')
       .map(t => t.trim().toLowerCase())
@@ -117,7 +108,7 @@ export default function VolunteerPage() {
       const emailMatch = patient.email?.toLowerCase().includes(term);
       const usernameMatch = patient.username?.toLowerCase().includes(term);
       const phoneMatch = patient.phone?.includes(term);
-      const idMatch = formatUserId(patient.id).toLowerCase().includes(term) || patient.id.toString().includes(term);
+      const idMatch = formatUserId(patient.id, patient.created_at).toLowerCase().includes(term) || patient.id.toString().includes(term);
       return nameMatch || emailMatch || usernameMatch || phoneMatch || idMatch;
     });
 
@@ -134,6 +125,8 @@ export default function VolunteerPage() {
       animate={{ opacity: 1 }}
       className="w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8 mx-auto"
     >
+      <AdminNav />
+
       <SmartBulkMatchModal
         isOpen={isSmartMatchOpen}
         onClose={() => setIsSmartMatchOpen(false)}
@@ -291,7 +284,7 @@ export default function VolunteerPage() {
                       <div className="mb-4">
                         <h3 className="font-bold text-[#1A1A19] text-lg leading-tight mb-1">{patient.full_name?.toUpperCase()}</h3>
                         <p className="text-xs font-mono font-medium text-[#8B8B86] flex items-center gap-1">
-                          <User size={12} /> ID: {formatUserId(patient.id)} ({patient.username})
+                          <User size={12} /> ID: {formatUserId(patient.id, patient.created_at)} ({patient.username})
                         </p>
                       </div>
 
@@ -392,7 +385,7 @@ export default function VolunteerPage() {
                     </div>
                     <div>
                       <h3 className="font-bold text-[#1A1A19]">{editingGenePatient.full_name}</h3>
-                      <div className="text-xs text-[#8B8B86]">{formatUserId(editingGenePatient.id)}</div>
+                      <div className="text-xs text-[#8B8B86]">{formatUserId(editingGenePatient.id, editingGenePatient.created_at)}</div>
                     </div>
                   </div>
                   <button
@@ -432,20 +425,18 @@ export default function VolunteerPage() {
                       ))}
 
                       {/* Unselected Genes */}
-                      {[
-                        { short: 'ACTN3', full: 'Muscle Power vs Endurance (ACTN3,ACE)' },
-                        { short: 'EDAR', full: 'Hair Thickness & Root Structure (EDAR,FGFR2)' },
-                        { short: 'CYP1A2', full: 'Caffeine Response (CYP1A2,ADORA2A)' }
-                      ].filter(ag => !(editedGeneType || '').toUpperCase().includes(ag.short)).map((ag, idx) => (
+                      {GENE_CATALOG.flatMap(cat => cat.options)
+                        .filter(opt => !editedGeneType.split(/,\s*(?![^(]*\))/).map(x => x.trim()).includes(opt.label))
+                        .map((opt, idx) => (
                         <span
                           key={`add-${idx}`}
                           className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold border border-dashed border-[#D4D4CE] text-[#8B8B86] leading-none cursor-pointer hover:bg-[#F4F4F2] hover:text-[#5A5A55] transition-all"
                           onClick={() => {
                             const genes = editedGeneType ? editedGeneType.split(/,\s*(?![^(]*\))/).map(x => x.trim()).filter(Boolean) : [];
-                            setEditedGeneType([...genes, ag.full].join(', '));
+                            setEditedGeneType([...genes, opt.label].join(', '));
                           }}
                         >
-                          {ag.full}
+                          {opt.label}
                           <Plus size={12} className="opacity-70" />
                         </span>
                       ))}

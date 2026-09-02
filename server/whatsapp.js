@@ -1,9 +1,10 @@
 const { buildNameWithTests, firstNameOf } = require('./notifyUtils');
 
-const formatUserId = (id) => {
+const formatUserId = (id, createdAt) => {
   const num = parseInt(id, 10);
   if (isNaN(num)) return `MBQ${id}`;
-  return `MBQ${String(num).padStart(3, '0')}`;
+  const year = createdAt ? new Date(createdAt).getFullYear() : new Date().getFullYear();
+  return `MBQ${year}${String(num).padStart(3, '0')}`;
 };
 
 const formatPhoneNumber = (phone) => {
@@ -84,10 +85,15 @@ const sendWhatsAppOtp = async (phone, otp) => {
   await sendWhatsAppTemplate(phone, 'order_status', [otp, 'dummy2', 'dummy3', 'dummy4']);
 };
 
+// Uses the approved 'order_status' template (Meta Business Manager), whose body
+// takes 4 positional variables in this order: name, Volunteer ID, Selected Test, Username.
 const sendWhatsAppSampleDispatched = async (user) => {
   if (!user || !user.phone) return;
-  await sendWhatsAppTemplate(user.phone, 'mbq_sample_collected', [
-    { type: 'text', text: buildNameWithTests(firstNameOf(user), user.gene_type), parameter_name: 'name' }
+  await sendWhatsAppTemplate(user.phone, 'order_status', [
+    firstNameOf(user),
+    formatUserId(user.id, user.created_at),
+    user.gene_type || 'MyBodyQode Full Panel',
+    user.username
   ]);
 };
 

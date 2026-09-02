@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertCircle, Loader2, CheckCircle2, ArrowLeft } from 'lucide-react';
+import { AlertCircle, Loader2, CheckCircle2, ArrowLeft, X } from 'lucide-react';
 import { triggerHaptic } from '@/lib/utils';
 import { theme } from '../theme';
 
@@ -30,6 +30,8 @@ export default function LoginPage() {
 
   // Dynamic Validation States
   const [emailExists, setEmailExists] = useState<boolean | null>(null);
+  const [emailApproved, setEmailApproved] = useState<boolean | null>(null);
+  const [emailAllRejected, setEmailAllRejected] = useState(false);
   const [checkingEmail, setCheckingEmail] = useState(false);
 
   // Forgot Credentials States
@@ -90,6 +92,8 @@ export default function LoginPage() {
       const e = email.trim();
       if (!e || !e.includes('@')) {
         setEmailExists(null);
+        setEmailApproved(null);
+        setEmailAllRejected(false);
         setCheckingEmail(false);
         return;
       }
@@ -98,6 +102,8 @@ export default function LoginPage() {
         const response = await fetch(`/api/auth/check-email?email=${encodeURIComponent(e)}`);
         const data = await response.json();
         setEmailExists(data.exists);
+        setEmailApproved(data.exists ? !!data.hasApproved : null);
+        setEmailAllRejected(!!data.allRejected);
       } catch (e) {
         console.error(e);
       } finally {
@@ -109,12 +115,12 @@ export default function LoginPage() {
   }, [email]);
 
   const isFormPerfectlyFilled =
-    email.trim().length > 0 && email.includes('@') && emailExists === true && !checkingEmail &&
+    email.trim().length > 0 && email.includes('@') && emailExists === true && emailApproved === true && !checkingEmail &&
     otp.trim().length === 6;
 
   const handleSendOtp = async () => {
     triggerHaptic('medium');
-    if (!email || !email.includes('@') || emailExists === false) {
+    if (!email || !email.includes('@') || emailExists === false || emailApproved === false) {
       setToastMessage({ type: 'error', text: 'Please enter a valid, registered email first.' });
       return;
     }
@@ -217,6 +223,29 @@ export default function LoginPage() {
     }
   };
 
+  const renderToast = () => (
+    <AnimatePresence>
+      {toastMessage && (
+        <motion.div
+          initial={{ opacity: 0, y: -40, x: '-50%' }}
+          animate={{ opacity: 1, y: 0, x: '-50%' }}
+          exit={{ opacity: 0, y: -40, x: '-50%' }}
+          className={`fixed top-6 left-1/2 max-w-[calc(100vw-2rem)] w-full sm:w-auto sm:max-w-md px-4 py-3 rounded-2xl shadow-xl text-sm font-semibold z-[9999] flex items-start gap-2.5 border ${toastMessage.type === 'error' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200'}`}
+        >
+          {toastMessage.type === 'error' ? <AlertCircle size={16} className="shrink-0 mt-0.5" /> : <CheckCircle2 size={16} className="shrink-0 mt-0.5" />}
+          <span className="flex-1 leading-snug">{toastMessage.text}</span>
+          <button
+            type="button"
+            onClick={() => setToastMessage(null)}
+            className={`p-1 rounded-full transition-colors shrink-0 ${toastMessage.type === 'error' ? 'hover:bg-red-100 text-red-600' : 'hover:bg-green-100 text-green-600'}`}
+          >
+            <X size={14} strokeWidth={2.5} />
+          </button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
   if (showForgot) {
     return (
       <motion.div
@@ -300,12 +329,14 @@ export default function LoginPage() {
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
-      className="w-full max-w-lg mx-auto mt-8 sm:mt-12 px-4"
-    >
+    <>
+      {renderToast()}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+        className="w-full max-w-lg mx-auto mt-8 sm:mt-12 px-4"
+      >
       <div className={theme.card}>
         <h2 className={theme.heading}>User Login</h2>
         <form onSubmit={handleLogin}>
@@ -342,7 +373,27 @@ export default function LoginPage() {
             </AnimatePresence>
 
             <AnimatePresence>
-              {!isEmailVerified && email.length > 0 && emailExists !== false && email.includes('@') && (
+              {emailExists === true && emailApproved === false && email.includes('@') && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10, height: 0 }}
+                  animate={{ opacity: 1, y: 0, height: 'auto' }}
+                  exit={{ opacity: 0, y: -10, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="text-sm text-amber-700 bg-amber-50/80 px-3 py-2.5 rounded-xl border border-amber-200 mt-2 flex flex-col gap-1.5 shadow-sm">
+                    <span className="flex items-center gap-1.5 font-semibold leading-snug">
+                      <AlertCircle size={14} strokeWidth={2.5} className="shrink-0" />
+                      {emailAllRejected
+                        ? "We weren't able to verify your registration. Please contact our support team for help."
+                        : "Please wait for the admin to verify your payment and registration. You can log in once your request has been approved."}
+                    </span>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {!isEmailVerified && email.length > 0 && emailExists !== false && emailApproved === true && email.includes('@') && (
                 <motion.div
                   initial={{ opacity: 0, height: 0, marginTop: 0 }}
                   animate={{ opacity: 1, height: 'auto', marginTop: 12 }}
@@ -473,6 +524,7 @@ export default function LoginPage() {
           </div>
         )}
       </AnimatePresence>
-    </motion.div>
+      </motion.div>
+    </>
   );
 }

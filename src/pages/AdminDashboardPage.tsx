@@ -4,49 +4,8 @@ import { Search, ChevronDown, CheckCircle2, User, FileText, Activity, Loader2, C
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 import QuestionsModal from '../components/QuestionsModal';
 import SmartBulkMatchModal from '../components/SmartBulkMatchModal';
-
-const formatUserId = (id: any) => {
-  const num = parseInt(id, 10);
-  if (isNaN(num)) return `MBQ${id}`;
-  return `MBQ${String(num).padStart(3, '0')}`;
-};
-
-const getRequiredGenes = (patientGeneString: string) => {
-  if (!patientGeneString) return [];
-  const panels = patientGeneString.split(/,\s*(?![^(]*\))/).map(s => s.trim().toLowerCase());
-  const requiredGenes: { panel: string, name: string, variants: string[] }[] = [];
-
-  panels.forEach(panel => {
-    if (panel.includes('caffine') || panel.includes('caffeine')) {
-      requiredGenes.push({ panel: "Caffeine Sensitivity", name: "CYP1A2", variants: ["AA", "AC", "CC"] });
-      requiredGenes.push({ panel: "Caffeine Sensitivity", name: "ADORA2A", variants: ["TT", "TC", "CC"] });
-    } else if (panel.includes('muscle') || panel.includes('actn3')) {
-      requiredGenes.push({ panel: "Muscle Performance", name: "ACTN3", variants: ["RR", "RX", "XX"] });
-      requiredGenes.push({ panel: "Muscle Performance", name: "ACE", variants: ["II", "ID", "DD"] });
-    } else if (panel.includes('hair') || panel.includes('edar')) {
-      requiredGenes.push({ panel: "Hair", name: "EDAR", variants: ["GG", "AG", "AA"] });
-      requiredGenes.push({ panel: "Hair", name: "FGFR2", variants: ["TT", "GT", "GG"] });
-    }
-  });
-  return requiredGenes;
-};
-
-const getGeneColor = (geneName: string) => {
-  const name = geneName.toLowerCase();
-  if (name.includes('actn3')) return 'bg-blue-50 text-blue-700 border-blue-200';
-  if (name.includes('edar')) return 'bg-purple-50 text-purple-700 border-purple-200';
-  if (name.includes('cyp1a2') || name.includes('caffeine') || name.includes('caffine')) return 'bg-amber-50 text-amber-700 border-amber-200';
-
-  return 'bg-[#F4F4F2] text-[#5A5A55] border-[#D4D4CE]';
-};
-
-const getGenePieColor = (geneName: string) => {
-  const name = geneName.toLowerCase();
-  if (name.includes('actn3')) return '#3b82f6';
-  if (name.includes('edar')) return '#a855f7';
-  if (name.includes('cyp1a2') || name.includes('caffeine') || name.includes('caffine')) return '#f59e0b';
-  return '#8B8B86';
-};
+import { formatUserId, getRequiredGenes, getGeneColor, getGenePieColor } from '@/lib/mbq';
+import AdminNav from '@/components/AdminNav';
 
 export default function LabDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -70,6 +29,7 @@ export default function LabDashboard() {
       .then(data => {
         const formatted = data.map((u: any) => ({
           id: String(u.id),
+          created_at: u.created_at,
           name: u.full_name?.toUpperCase(),
           email: u.email,
           phone: u.phone,
@@ -298,8 +258,8 @@ export default function LabDashboard() {
       return p.name.toLowerCase().includes(term) ||
         p.email.toLowerCase().includes(term) ||
         (p.phone && p.phone.includes(term)) ||
-        formatUserId(p.id).toLowerCase().includes(term) ||
-        formatUserId(p.id).toLowerCase().includes(termWithoutHyphen) ||
+        formatUserId(p.id, p.created_at).toLowerCase().includes(term) ||
+        formatUserId(p.id, p.created_at).toLowerCase().includes(termWithoutHyphen) ||
         p.id.toString().includes(term) ||
         p.id.toString().includes(termWithoutHyphen);
     });
@@ -347,6 +307,8 @@ export default function LabDashboard() {
       animate={{ opacity: 1 }}
       className="w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8 mx-auto"
     >
+      <AdminNav />
+
       {/* Header Section */}
       <div className="mb-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
         <div className="space-y-2 lg:flex-1 shrink-0">
@@ -398,7 +360,7 @@ export default function LabDashboard() {
                     <div className="flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getGenePieColor(g.name) }} />
                       <span className="text-[#5A5A55] whitespace-nowrap">
-                        {g.name.toLowerCase().includes('actn3') ? 'Muscle (ACTN3, ACE)' : g.name.toLowerCase().includes('edar') ? 'Hair (EDAR, FGFR2)' : 'Caffeine (CYP1A2, ADORA2A)'}
+                        {g.name}
                       </span>
                     </div>
                     <span className="text-[#1A1A19] font-bold">{g.value}</span>
@@ -593,7 +555,7 @@ export default function LabDashboard() {
                         </div>
                         <div className="text-xs font-mono font-medium text-[#8B8B86] mt-1 flex items-center gap-1.5">
                           <User className="w-3 h-3" />
-                          ID: {formatUserId(patient.id)}
+                          ID: {formatUserId(patient.id, patient.created_at)}
                         </div>
                       </div>
                     </div>
@@ -840,7 +802,7 @@ export default function LabDashboard() {
                   <div className="mb-4">
                     <h3 className="font-bold text-[#1A1A19] text-xl leading-tight mb-1">{patient.name}</h3>
                     <div className="text-xs font-mono font-medium text-[#8B8B86] flex items-center gap-1.5">
-                      <User className="w-3 h-3" /> {formatUserId(patient.id)}
+                      <User className="w-3 h-3" /> {formatUserId(patient.id, patient.created_at)}
                     </div>
                   </div>
 
@@ -1236,7 +1198,7 @@ export default function LabDashboard() {
                     <div className="flex items-center gap-3">
                       <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: getGenePieColor(g.name) }} />
                       <span className="text-[#5A5A55]">
-                        {g.name.toLowerCase().includes('actn3') ? 'Muscle (ACTN3, ACE)' : g.name.toLowerCase().includes('edar') ? 'Hair (EDAR, FGFR2)' : 'Caffeine (CYP1A2, ADORA2A)'}
+                        {g.name}
                       </span>
                     </div>
                     <span className="text-[#1A1A19] font-bold text-base">{g.value}</span>

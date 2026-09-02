@@ -1,21 +1,16 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, Activity, LogOut, AlertCircle, Sparkles, Users, ArrowLeft } from 'lucide-react';
+import { X, FileText, Activity, LogOut, AlertCircle, Sparkles, Users, ArrowLeft, ClipboardList } from 'lucide-react';
 import { OrderTracking } from '@/components/ui/order-tracking';
 import { useNavigate, Link } from 'react-router-dom';
 import { triggerHaptic } from '@/lib/utils';
+import { formatUserId, getGeneColor } from '@/lib/mbq';
 import PatientSurveyModal from '@/components/PatientSurveyModal';
 import LifestyleModal from '@/components/LifestyleModal';
 import AIReportModal from '@/components/AIReportModal';
 import ReportViewerModal from '@/components/ReportViewerModal';
 import FloatingChatbot from '@/components/FloatingChatbot';
-
-const formatUserId = (id: any, createdAt?: string | null) => {
-  const num = parseInt(id, 10);
-  const year = createdAt ? new Date(createdAt).getFullYear() : new Date().getFullYear();
-  if (isNaN(num)) return `MBQ${id}`;
-  return `MBQ${year}${String(num).padStart(3, '0')}`;
-};
+import SwabTutorial from '@/components/SwabTutorial';
 
 // Timestamps without an explicit UTC/offset marker (e.g. Python's `datetime.utcnow().isoformat()`)
 // get parsed as local time by the JS Date constructor. Since these are always produced in UTC
@@ -54,6 +49,7 @@ export default function PatientDashboardPage() {
   const [viewReportData, setViewReportData] = useState<{ testName: string; reportData: any; variants: any; mbqId?: string; generatedAt?: string | null; gender?: string | null } | null>(null);
   const [fetchDataStatus, setFetchDataStatus] = useState<{ type: 'success' | 'error' | 'warning', message: string } | null>(null);
   const [hasMultipleProfiles, setHasMultipleProfiles] = useState(false);
+  const [showSwabTutorial, setShowSwabTutorial] = useState(false);
 
   // Switch Accounts state
   const [showSwitchAccountsModal, setShowSwitchAccountsModal] = useState(false);
@@ -183,21 +179,11 @@ export default function PatientDashboardPage() {
     const genes = geneString.split(', ');
     return (
       <div className="flex flex-col gap-2">
-        {genes.map((gene, idx) => {
-          let styleClass = "border-[#E8E8E5] text-[#1A1A19] bg-white";
-          if (gene.includes("Caffeine")) {
-            styleClass = "border-[#FDE08B] text-[#B45309] bg-[#FFFBEB]";
-          } else if (gene.includes("Muscle Power")) {
-            styleClass = "border-[#BFDBFE] text-[#1D4ED8] bg-[#EFF6FF]";
-          } else if (gene.includes("Hair Thickness")) {
-            styleClass = "border-[#E9D5FF] text-[#7E22CE] bg-[#FAF5FF]";
-          }
-          return (
-            <div key={idx} className={`px-4 py-1.5 rounded-full border font-medium text-sm tracking-wide w-fit shadow-sm ${styleClass}`}>
-              {gene}
-            </div>
-          );
-        })}
+        {genes.map((gene, idx) => (
+          <div key={idx} className={`px-4 py-1.5 rounded-full border font-medium text-sm tracking-wide w-fit shadow-sm ${getGeneColor(gene)}`}>
+            {gene}
+          </div>
+        ))}
       </div>
     );
   };
@@ -321,6 +307,43 @@ export default function PatientDashboardPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Rejected request banner */}
+      {user.request_status === 'rejected' && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 flex items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-5 py-4"
+        >
+          <AlertCircle size={18} className="text-red-600 shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-red-800">Your request needs attention</p>
+            <p className="text-xs text-red-600 mt-0.5">
+              We weren't able to verify your request. Please contact our support team for help.
+            </p>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Collection guide card — shown once the request is approved, before the sample is collected */}
+      {user.request_status === 'accepted' && !user.sample_collected && (
+        <motion.button
+          type="button"
+          onClick={() => setShowSwabTutorial(true)}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 w-full flex items-center gap-3 bg-[#EBE9FC] border border-[#6057D7]/20 hover:bg-[#E3E0FA] rounded-2xl px-5 py-4 text-left transition-colors cursor-pointer"
+        >
+          <ClipboardList size={18} className="text-[#6057D7] shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-[#1A1A19]">Your request is approved!</p>
+            <p className="text-xs text-[#6057D7] mt-0.5">
+              See what to expect when your sample is collected.
+            </p>
+          </div>
+          <span className="material-symbols-rounded text-[#6057D7] shrink-0" aria-hidden="true">chevron_right</span>
+        </motion.button>
+      )}
 
       {/* Questionnaire Retake Banners */}
       {user.reports && Object.entries(user.reports).map(([panelName, panelData]: [string, any]) => {
@@ -498,6 +521,14 @@ export default function PatientDashboardPage() {
                       name: "User Registered",
                       timestamp: formatIST(user.created_at || user.status_timestamps?.registered, 'Completed'),
                       isCompleted: true
+                    },
+                    {
+                      name: "Admin Approval",
+                      timestamp: user.request_status === 'rejected'
+                        ? 'Rejected'
+                        : formatIST(user.status_timestamps?.accepted),
+                      isCompleted: user.request_status === 'accepted',
+                      isPendingReview: user.request_status === 'pending'
                     },
                     {
                       name: "Sample Collected",
@@ -742,6 +773,8 @@ export default function PatientDashboardPage() {
           gender={viewReportData.gender}
         />
       )}
+
+      {showSwabTutorial && <SwabTutorial onClose={() => setShowSwabTutorial(false)} />}
 
       {/* Floating Chatbot */}
       {user && user.reports && Object.values(user.reports).some((r: any) => r.verified) && (

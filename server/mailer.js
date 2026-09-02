@@ -3,10 +3,11 @@ const { buildNameWithTests, firstNameOf } = require('./notifyUtils');
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
-const formatUserId = (id) => {
+const formatUserId = (id, createdAt) => {
   const num = parseInt(id, 10);
   if (isNaN(num)) return `MBQ${id}`;
-  return `MBQ${String(num).padStart(3, '0')}`;
+  const year = createdAt ? new Date(createdAt).getFullYear() : new Date().getFullYear();
+  return `MBQ${year}${String(num).padStart(3, '0')}`;
 };
 
 const sendSampleDispatchedEmail = async (user) => {
@@ -16,7 +17,7 @@ const sendSampleDispatchedEmail = async (user) => {
   }
 
   const firstName = buildNameWithTests(firstNameOf(user), user.gene_type);
-  const volunteerId = formatUserId(user.id);
+  const volunteerId = formatUserId(user.id, user.created_at);
   const selectedQode = user.gene_type || 'MyBodyQode Full Panel';
 
   const mailOptions = {
@@ -257,7 +258,7 @@ const sendSampleDispatchedEmail = async (user) => {
       </ul>
       
       <div class="button-container">
-        <a href="https://mbq-tutorial.vercel.app/dashboard" class="button">Track My Progress</a>
+        <a href="https://mbq-shhm.vercel.app/dashboard" class="button">Track My Progress</a>
       </div>
       
       <div class="quote">
@@ -484,7 +485,7 @@ const sendForgotCredentialsEmail = async (user) => {
       <p>If you didn't request this, you can safely ignore this email.</p>
       
       <div class="button-container">
-        <a href="https://mbq-tutorial.vercel.app/dashboard" class="button">Log In to My Account</a>
+        <a href="https://mbq-shhm.vercel.app/dashboard" class="button">Log In to My Account</a>
       </div>
       
       <p style="margin-top: 40px; color: #1A1A19;">Warm Regards,<br><strong>Team MyBodyQode</strong></p>
@@ -768,7 +769,7 @@ const sendReportReadyEmail = async (user, testName) => {
       <p>Log in to your MyBodyQode dashboard to download and review your personalized report.</p>
       
       <div class="button-container">
-        <a href="https://mbq-tutorial.vercel.app/dashboard" class="button">Go to Dashboard</a>
+        <a href="https://mbq-shhm.vercel.app/dashboard" class="button">Go to Dashboard</a>
       </div>
       
       <p style="font-size: 14px;">If you have any questions, feel free to reply to this email.</p>
@@ -1003,7 +1004,7 @@ const sendCollectAnswersEmail = async (user, testNames) => {
       <p>Please log in to your dashboard to answer them.</p>
       
       <div class="button-container">
-        <a href="https://mbq-tutorial.vercel.app/dashboard" class="button">Answer Questions Now</a>
+        <a href="https://mbq-shhm.vercel.app/dashboard" class="button">Answer Questions Now</a>
       </div>
       
       <p style="font-size: 14px;">If you have any questions, feel free to reply to this email.</p>

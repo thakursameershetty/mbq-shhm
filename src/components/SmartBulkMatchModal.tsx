@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Sparkles, Wand2, Loader2, FileSpreadsheet, CheckCircle2, User, Search } from 'lucide-react';
+import { formatUserId } from '@/lib/mbq';
 
 interface SmartBulkMatchModalProps {
   isOpen: boolean;
@@ -13,12 +14,8 @@ interface MatchedUser {
   full_name: string;
   username: string;
   sample_received: boolean;
+  created_at?: string | null;
 }
-
-const formatUserId = (id: any) => {
-  const num = parseInt(id, 10);
-  return `MBQ-${isNaN(num) ? '000' : num.toString().padStart(3, '0')}`;
-};
 
 export default function SmartBulkMatchModal({ isOpen, onClose, onMatch }: SmartBulkMatchModalProps) {
   const [pastedText, setPastedText] = useState('');
@@ -101,7 +98,7 @@ export default function SmartBulkMatchModal({ isOpen, onClose, onMatch }: SmartB
 
   const handleApplyFilter = () => {
     if (matchedUsers) {
-      const formattedIds = matchedUsers.map(u => formatUserId(u.id)).join(', ');
+      const formattedIds = matchedUsers.map(u => formatUserId(u.id, u.created_at)).join(', ');
       onMatch(formattedIds);
       handleClose();
     }
@@ -200,7 +197,7 @@ export default function SmartBulkMatchModal({ isOpen, onClose, onMatch }: SmartB
                               <h4 className="font-bold text-[#1A1A19]">{user.full_name || 'Unknown Name'}</h4>
                               <div className="flex items-center gap-2 mt-1">
                                 <span className="text-xs font-mono text-[#8B8B86] bg-[#F9F9F8] px-2 py-0.5 rounded-md border border-[#E8E8E5]">
-                                  {formatUserId(user.id)}
+                                  {formatUserId(user.id, user.created_at)}
                                 </span>
                                 {user.username && (
                                   <span className="text-xs text-[#8B8B86] truncate max-w-[150px]">@{user.username}</span>
