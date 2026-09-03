@@ -800,12 +800,40 @@ export default function TestReportPage() {
                         let genes = Object.keys(genesObj);
 
                         // Page 1 hero image: swaps in a gender + genotype specific portrait.
-                        // Mirrors the logic in ReportViewerModal.tsx.
+                        // Each category only has one photo set, shot against its headline gene
+                        // (CYP1A2 / ACTN3 / EDAR). A Lite purchase of the category's *other* gene
+                        // (ADORA2A / ACE / FGFR2) has no photos of its own, so its genotype is
+                        // mapped onto the equivalent tier (dominant / heterozygous / recessive) of
+                        // the headline gene and that photo is reused. Mirrors ReportViewerModal.tsx.
                         (function() {
                             const heroConfigs = {
-                                caffeine: { dir: 'CYP1A2', gene: 'CYP1A2', normalize: gt => gt === 'CA' ? 'AC' : gt, fileName: (gt, genderKey) => genderKey === 'male' ? ('CYP1A2_male_' + gt + ' 1.png') : ('CYP1A2_' + gt + '_female 1.png') },
-                                muscle: { dir: 'ACTN3', gene: 'ACTN3', normalize: gt => gt === 'XR' ? 'RX' : gt, fileName: (gt, genderKey) => 'ACTN3_' + gt + '_' + genderKey + '.png' },
-                                hair: { dir: 'EDAR:FGFR2', gene: 'EDAR', normalize: gt => gt === 'GA' ? 'AG' : gt, fileName: (gt, genderKey) => 'EDAR_' + gt + '_' + (genderKey === 'male' ? 'Male' : 'female') + '.png' }
+                                caffeine: {
+                                    dir: 'CYP1A2',
+                                    headlineGene: 'CYP1A2',
+                                    fileName: (gt, genderKey) => genderKey === 'male' ? ('CYP1A2_male_' + gt + ' 1.png') : ('CYP1A2_' + gt + '_female 1.png'),
+                                    genes: {
+                                        CYP1A2: { normalize: gt => gt === 'CA' ? 'AC' : gt, tiers: ['AA', 'AC', 'CC'] },
+                                        ADORA2A: { normalize: gt => gt === 'CT' ? 'TC' : gt, tiers: ['TT', 'TC', 'CC'] }
+                                    }
+                                },
+                                muscle: {
+                                    dir: 'ACTN3',
+                                    headlineGene: 'ACTN3',
+                                    fileName: (gt, genderKey) => 'ACTN3_' + gt + '_' + genderKey + '.png',
+                                    genes: {
+                                        ACTN3: { normalize: gt => gt === 'XR' ? 'RX' : gt, tiers: ['RR', 'RX', 'XX'] },
+                                        ACE: { normalize: gt => gt === 'DI' ? 'ID' : gt, tiers: ['DD', 'ID', 'II'] }
+                                    }
+                                },
+                                hair: {
+                                    dir: 'EDAR:FGFR2',
+                                    headlineGene: 'EDAR',
+                                    fileName: (gt, genderKey) => 'EDAR_' + gt + '_' + (genderKey === 'male' ? 'Male' : 'female') + '.png',
+                                    genes: {
+                                        EDAR: { normalize: gt => gt === 'GA' ? 'AG' : gt, tiers: ['GG', 'AG', 'AA'] },
+                                        FGFR2: { normalize: gt => gt === 'TG' ? 'GT' : gt, tiers: ['TT', 'GT', 'GG'] }
+                                    }
+                                }
                             };
                             const testKey = ${JSON.stringify(testId)};
                             const config = heroConfigs[testKey];
@@ -813,9 +841,28 @@ export default function TestReportPage() {
                             if (config && heroEl) {
                                 const rawGender = (window.USER_GENDER || '').toLowerCase();
                                 const genderKey = rawGender.startsWith('m') ? 'male' : rawGender.startsWith('f') ? 'female' : null;
-                                const genotype = config.normalize(genesObj[config.gene] || '');
-                                if (genderKey && genotype) {
-                                    heroEl.src = 'assets/mbq-page1/' + encodeURIComponent(config.dir) + '/' + encodeURIComponent(config.fileName(genotype, genderKey));
+
+                                let genotypeCode = null;
+                                const headlineInfo = config.genes[config.headlineGene];
+                                if (genesObj[config.headlineGene]) {
+                                    genotypeCode = headlineInfo.normalize(genesObj[config.headlineGene]);
+                                } else {
+                                    const altGeneName = Object.keys(config.genes).find(g => g !== config.headlineGene && genesObj[g]);
+                                    if (altGeneName) {
+                                        const altInfo = config.genes[altGeneName];
+                                        const altGenotype = altInfo.normalize(genesObj[altGeneName]);
+                                        const tierIndex = altInfo.tiers.indexOf(altGenotype);
+                                        if (tierIndex !== -1) genotypeCode = headlineInfo.tiers[tierIndex];
+                                    }
+                                }
+
+                                if (genderKey && genotypeCode) {
+                                    // The hair asset folder is literally named "EDAR:FGFR2" - encoding
+                                    // that colon (%3A) makes Vite's static server 404 into the SPA
+                                    // fallback instead of serving the file, so keep it unescaped while
+                                    // still encoding everything else in the path.
+                                    const dirPath = config.dir.split(':').map(encodeURIComponent).join(':');
+                                    heroEl.src = 'assets/mbq-page1/' + dirPath + '/' + encodeURIComponent(config.fileName(genotypeCode, genderKey));
                                 }
                             }
                         })();
@@ -1034,7 +1081,43 @@ export default function TestReportPage() {
                         
                         // PAGE 1
                         if (data.page_1) {
-                            setText('page1-report-title', data.page_1.report_title);
+                            // Long titles (e.g. "Endurance Performance - Balanced Capacity" or
+                            // "Low-Density, Medium-Strand Hair") were running past the title column
+                            // and overlapping the hero photo. Break onto two lines at " - " if
+                            // present (delimiter dropped), else at the first ", " (comma kept on
+                            // line 1), then shrink the font size (if needed) until each line fits
+                            // the 430px column on a single row — otherwise a long half like
+                            // "Endurance Performance" wraps a second, unwanted time on its own.
+                            // Mirrors ReportViewerModal.tsx.
+                            const titleEl = document.getElementById('page1-report-title');
+                            if (titleEl && data.page_1.report_title) {
+                                const titleText = data.page_1.report_title;
+                                let titleLines;
+                                if (titleText.includes(' - ')) {
+                                    titleLines = titleText.split(' - ').map(s => s.trim()).filter(Boolean);
+                                } else {
+                                    const commaIdx = titleText.indexOf(', ');
+                                    titleLines = commaIdx !== -1
+                                        ? [titleText.slice(0, commaIdx + 1).trim(), titleText.slice(commaIdx + 1).trim()]
+                                        : [titleText.trim()];
+                                }
+                                titleEl.textContent = '';
+                                titleEl.style.fontSize = '44px';
+                                const lineSpans = titleLines.map((line) => {
+                                    const span = document.createElement('span');
+                                    span.textContent = line;
+                                    span.style.display = 'block';
+                                    span.style.whiteSpace = 'nowrap';
+                                    titleEl.appendChild(span);
+                                    return span;
+                                });
+                                const maxLineWidth = 430;
+                                let fontSize = 44;
+                                while (fontSize > 22 && lineSpans.some(s => s.scrollWidth > maxLineWidth)) {
+                                    fontSize -= 2;
+                                    titleEl.style.fontSize = fontSize + 'px';
+                                }
+                            }
                             if (data.page_1.report_subtitles) {
                                 data.page_1.report_subtitles.forEach((s, i) => setText('page1-report-subtitle-' + (i+1), s));
                             }

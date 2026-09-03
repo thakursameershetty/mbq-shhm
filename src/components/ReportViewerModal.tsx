@@ -509,15 +509,42 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                         let genes = Object.keys(genesObj);
 
                         // Page 1 hero image: swaps in a gender + genotype specific portrait.
-                        // Each test's headline gene (the one classic RR/RX/XX-style trait is
-                        // built from) drives which of the 6 pre-rendered images shows -
-                        // 3 genotypes x male/female. Falls back to the template's default
-                        // hero image if gender or a matching asset isn't available.
+                        // Each category only has one photo set, shot against its headline gene
+                        // (CYP1A2 / ACTN3 / EDAR) - 3 genotypes x male/female. A Lite purchase of
+                        // the category's *other* gene (ADORA2A / ACE / FGFR2) has no photos of its
+                        // own, so its genotype is mapped onto the equivalent tier (dominant /
+                        // heterozygous / recessive) of the headline gene and that photo is reused.
+                        // Falls back to the template's default hero image if gender or a matching
+                        // asset isn't available.
                         (function() {
                             const heroConfigs = {
-                                caffeine: { dir: 'CYP1A2', gene: 'CYP1A2', normalize: gt => gt === 'CA' ? 'AC' : gt, fileName: (gt, genderKey) => genderKey === 'male' ? ('CYP1A2_male_' + gt + ' 1.png') : ('CYP1A2_' + gt + '_female 1.png') },
-                                muscle: { dir: 'ACTN3', gene: 'ACTN3', normalize: gt => gt === 'XR' ? 'RX' : gt, fileName: (gt, genderKey) => 'ACTN3_' + gt + '_' + genderKey + '.png' },
-                                hair: { dir: 'EDAR:FGFR2', gene: 'EDAR', normalize: gt => gt === 'GA' ? 'AG' : gt, fileName: (gt, genderKey) => 'EDAR_' + gt + '_' + (genderKey === 'male' ? 'Male' : 'female') + '.png' }
+                                caffeine: {
+                                    dir: 'CYP1A2',
+                                    headlineGene: 'CYP1A2',
+                                    fileName: (gt, genderKey) => genderKey === 'male' ? ('CYP1A2_male_' + gt + ' 1.png') : ('CYP1A2_' + gt + '_female 1.png'),
+                                    genes: {
+                                        CYP1A2: { normalize: gt => gt === 'CA' ? 'AC' : gt, tiers: ['AA', 'AC', 'CC'] },
+                                        ADORA2A: { normalize: gt => gt === 'CT' ? 'TC' : gt, tiers: ['TT', 'TC', 'CC'] }
+                                    }
+                                },
+                                muscle: {
+                                    dir: 'ACTN3',
+                                    headlineGene: 'ACTN3',
+                                    fileName: (gt, genderKey) => 'ACTN3_' + gt + '_' + genderKey + '.png',
+                                    genes: {
+                                        ACTN3: { normalize: gt => gt === 'XR' ? 'RX' : gt, tiers: ['RR', 'RX', 'XX'] },
+                                        ACE: { normalize: gt => gt === 'DI' ? 'ID' : gt, tiers: ['DD', 'ID', 'II'] }
+                                    }
+                                },
+                                hair: {
+                                    dir: 'EDAR:FGFR2',
+                                    headlineGene: 'EDAR',
+                                    fileName: (gt, genderKey) => 'EDAR_' + gt + '_' + (genderKey === 'male' ? 'Male' : 'female') + '.png',
+                                    genes: {
+                                        EDAR: { normalize: gt => gt === 'GA' ? 'AG' : gt, tiers: ['GG', 'AG', 'AA'] },
+                                        FGFR2: { normalize: gt => gt === 'TG' ? 'GT' : gt, tiers: ['TT', 'GT', 'GG'] }
+                                    }
+                                }
                             };
                             const testKey = ${JSON.stringify(templateName)};
                             const config = heroConfigs[testKey];
@@ -525,11 +552,77 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                             if (config && heroEl) {
                                 const rawGender = (window.USER_GENDER || '').toLowerCase();
                                 const genderKey = rawGender.startsWith('m') ? 'male' : rawGender.startsWith('f') ? 'female' : null;
-                                const genotype = config.normalize(genesObj[config.gene] || '');
-                                if (genderKey && genotype) {
-                                    heroEl.src = 'assets/mbq-page1/' + encodeURIComponent(config.dir) + '/' + encodeURIComponent(config.fileName(genotype, genderKey));
+
+                                let genotypeCode = null;
+                                const headlineInfo = config.genes[config.headlineGene];
+                                if (genesObj[config.headlineGene]) {
+                                    genotypeCode = headlineInfo.normalize(genesObj[config.headlineGene]);
+                                } else {
+                                    const altGeneName = Object.keys(config.genes).find(g => g !== config.headlineGene && genesObj[g]);
+                                    if (altGeneName) {
+                                        const altInfo = config.genes[altGeneName];
+                                        const altGenotype = altInfo.normalize(genesObj[altGeneName]);
+                                        const tierIndex = altInfo.tiers.indexOf(altGenotype);
+                                        if (tierIndex !== -1) genotypeCode = headlineInfo.tiers[tierIndex];
+                                    }
+                                }
+
+                                if (genderKey && genotypeCode) {
+                                    // The hair asset folder is literally named "EDAR:FGFR2" - encoding
+                                    // that colon (%3A) makes Vite's static server 404 into the SPA
+                                    // fallback instead of serving the file, so keep it unescaped while
+                                    // still encoding everything else in the path.
+                                    const dirPath = config.dir.split(':').map(encodeURIComponent).join(':');
+                                    heroEl.src = 'assets/mbq-page1/' + dirPath + '/' + encodeURIComponent(config.fileName(genotypeCode, genderKey));
                                 }
                             }
+                        })();
+
+                        // Single-gene mode: hide the unused gene's Page 5 boxes (chromatogram,
+                        // "what does your result mean", "where is this variant located"). The
+                        // text-only "what does your result mean" box spans the full row (matching
+                        // the existing full-width row-1 "What is Sanger Sequencing" pattern), and
+                        // is reordered to sit above the two image-heavy boxes, which are left at
+                        // their natural half-width and placed side by side so the chromatogram and
+                        // chromosome-location images don't blow up to full page width.
+                        (function() {
+                            const GENE_PAIRS_BY_CATEGORY = { caffeine: ['CYP1A2', 'ADORA2A'], muscle: ['ACTN3', 'ACE'], hair: ['EDAR', 'FGFR2'] };
+                            if (genes.length !== 1) return;
+                            const testKey = ${JSON.stringify(templateName)};
+                            const pair = GENE_PAIRS_BY_CATEGORY[testKey] || genes;
+                            const usedGene = genes[0];
+
+                            // Each box's numbered badge (1/2/3/4) is static template text tied to
+                            // its original position, not its id - re-stamp it to match the new
+                            // visual order so the badges read 1, 2, 3, 4 top-to-bottom again.
+                            const setBadgeNumber = (boxEl, num) => {
+                                const badge = boxEl && boxEl.firstElementChild && boxEl.firstElementChild.firstElementChild;
+                                if (badge) badge.textContent = String(num);
+                            };
+
+                            const resultMeaningEl = document.getElementById('page3-' + usedGene + '-box');
+                            if (resultMeaningEl) {
+                                resultMeaningEl.style.gridColumn = '1 / -1';
+                                resultMeaningEl.style.order = '1';
+                                setBadgeNumber(resultMeaningEl, 2);
+                            }
+                            const chromatogramBoxEl = document.getElementById('page5-' + usedGene + '-chromatogram-box');
+                            if (chromatogramBoxEl) {
+                                chromatogramBoxEl.style.order = '2';
+                                setBadgeNumber(chromatogramBoxEl, 3);
+                            }
+                            const variantBoxEl = document.getElementById('page5-' + usedGene + '-variant-box');
+                            if (variantBoxEl) {
+                                variantBoxEl.style.order = '3';
+                                setBadgeNumber(variantBoxEl, 4);
+                            }
+
+                            pair.filter(g => g !== usedGene).forEach(g => {
+                                ['page5-' + g + '-chromatogram-box', 'page3-' + g + '-box', 'page5-' + g + '-variant-box'].forEach(id => {
+                                    const el = document.getElementById(id);
+                                    if (el) el.style.display = 'none';
+                                });
+                            });
                         })();
 
                         let allLinks = [];
@@ -699,7 +792,42 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                         
                         // PAGE 1
                         if (data.page_1) {
-                            setText('page1-report-title', data.page_1.report_title);
+                            // Long titles (e.g. "Endurance Performance - Balanced Capacity" or
+                            // "Low-Density, Medium-Strand Hair") were running past the title column
+                            // and overlapping the hero photo. Break onto two lines at " - " if
+                            // present (delimiter dropped), else at the first ", " (comma kept on
+                            // line 1), then shrink the font size (if needed) until each line fits
+                            // the 430px column on a single row — otherwise a long half like
+                            // "Endurance Performance" wraps a second, unwanted time on its own.
+                            const titleEl = document.getElementById('page1-report-title');
+                            if (titleEl && data.page_1.report_title) {
+                                const titleText = data.page_1.report_title;
+                                let titleLines;
+                                if (titleText.includes(' - ')) {
+                                    titleLines = titleText.split(' - ').map(s => s.trim()).filter(Boolean);
+                                } else {
+                                    const commaIdx = titleText.indexOf(', ');
+                                    titleLines = commaIdx !== -1
+                                        ? [titleText.slice(0, commaIdx + 1).trim(), titleText.slice(commaIdx + 1).trim()]
+                                        : [titleText.trim()];
+                                }
+                                titleEl.textContent = '';
+                                titleEl.style.fontSize = '44px';
+                                const lineSpans = titleLines.map((line) => {
+                                    const span = document.createElement('span');
+                                    span.textContent = line;
+                                    span.style.display = 'block';
+                                    span.style.whiteSpace = 'nowrap';
+                                    titleEl.appendChild(span);
+                                    return span;
+                                });
+                                const maxLineWidth = 430;
+                                let fontSize = 44;
+                                while (fontSize > 22 && lineSpans.some(s => s.scrollWidth > maxLineWidth)) {
+                                    fontSize -= 2;
+                                    titleEl.style.fontSize = fontSize + 'px';
+                                }
+                            }
                             if (data.page_1.report_subtitles) {
                                 data.page_1.report_subtitles.forEach((s, i) => setText('page1-report-subtitle-' + (i+1), s));
                             }
