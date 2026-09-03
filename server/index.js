@@ -357,7 +357,7 @@ app.put('/api/users/:id/request-status', async (req, res) => {
 
     const updatedUserRes = await pool.query(`
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested,
-             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at
       FROM users WHERE id = $1
     `, [userId]);
 
@@ -397,7 +397,7 @@ app.post('/api/auth/login', async (req, res) => {
     const query = `
       SELECT 
         id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-        request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+        request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at
       FROM users
       WHERE LOWER(email) = LOWER($1)
     `;
@@ -450,7 +450,7 @@ app.put('/api/users/:id', async (req, res) => {
       SET full_name = $1, email = $2, phone = $3, age = $4, phenotypic_analysis = $5
       WHERE id = $6
       RETURNING id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-                request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at;
+                request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at;
     `;
     const result = await pool.query(query, [full_name, email, phone, age, JSON.stringify(phenotypic_analysis), userId]);
 
@@ -481,7 +481,7 @@ app.put('/api/users/:id/gene', async (req, res) => {
       SET gene_type = $1
       WHERE id = $2
       RETURNING id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-                request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at;
+                request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at;
     `;
     const result = await pool.query(query, [gene_type, userId]);
 
@@ -509,7 +509,7 @@ app.get('/api/users/:id', async (req, res) => {
   try {
     const query = `
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at
       FROM users WHERE id = $1
     `;
     const result = await pool.query(query, [userId]);
@@ -546,7 +546,7 @@ app.post('/api/users/:id/lifestyle', async (req, res) => {
       )
       WHERE id = $3
       RETURNING id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested,
-                request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at;
+                request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at;
     `;
     const result = await pool.query(query, [dailyActivity, sleepTiming, userId]);
     if (result.rowCount === 0) {
@@ -567,7 +567,7 @@ app.get('/api/users/by-email/:email', async (req, res) => {
   try {
     const query = `
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at
       FROM users WHERE LOWER(email) = LOWER($1)
       ORDER BY id ASC
     `;
@@ -585,7 +585,7 @@ app.get('/api/admin/patients', async (req, res) => {
     const query = `
       SELECT 
         id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-        request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+        request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at
       FROM users
       ORDER BY created_at DESC;
     `;
@@ -720,7 +720,7 @@ app.put('/api/users/:id/sample-collected', async (req, res) => {
     // Fetch updated user
     const updatedUserRes = await pool.query(`
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at
       FROM users WHERE id = $1
     `, [userId]);
 
@@ -767,7 +767,7 @@ app.put('/api/users/:id/sample-received', async (req, res) => {
     // Fetch updated user
     const updatedUserRes = await pool.query(`
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at
       FROM users WHERE id = $1
     `, [userId]);
 
@@ -792,6 +792,57 @@ app.put('/api/users/:id/sample-received', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Request AI Report Generation (Automated Pipeline)
 // ─────────────────────────────────────────────────────────────────────────────
+// Calls the Python AI pipeline for a single panel if it's ready (variants +
+// answers both present, no report generated yet). Returns { ai_report,
+// generated_at } on success, or null if not ready / the call failed. Shared
+// between the two triggers below so generation is idempotent and can fire
+// from whichever of {answers submitted, variants entered} completes second.
+async function generateAiReportForPanel(testName, panelData, phenotypeResponses, rawAnswers) {
+  if (!panelData || !panelData.variants || panelData.ai_report) return null;
+  if (!phenotypeResponses || Object.keys(phenotypeResponses).length === 0) return null;
+
+  let category = '';
+  if (testName.toLowerCase().includes('caffeine')) category = 'caffeine';
+  else if (testName.toLowerCase().includes('muscle')) category = 'muscle';
+  else if (testName.toLowerCase().includes('hair')) category = 'hair';
+  else category = 'caffeine';
+
+  console.log(`Triggering AI generation for ${category}...`);
+
+  const payload = {
+    category,
+    genes: panelData.variants,
+    phenotype_responses: phenotypeResponses,
+    lifestyle_context: {
+      user_type: "explorer",
+      raw_answers: rawAnswers || []
+    }
+  };
+  console.log('Sending payload to Python backend:', JSON.stringify(payload));
+
+  const url = process.env.PYTHON_BACKEND_URL ? `${process.env.PYTHON_BACKEND_URL}/dynamic/analyze-category` : 'http://127.0.0.1:8000/dynamic/analyze-category';
+  try {
+    const aiResponse = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (aiResponse.ok) {
+      const aiData = await aiResponse.json();
+      console.log(`AI generation successful for ${category}.`);
+      return { ai_report: aiData.results || aiData, generated_at: new Date().toISOString() };
+    }
+
+    const errorText = await aiResponse.text();
+    console.error(`AI generation failed for ${category}: ${aiResponse.status} ${aiResponse.statusText} - ${errorText}`);
+    return null;
+  } catch (err) {
+    console.error(`AI generation request failed for ${category}:`, err);
+    return null;
+  }
+}
+
 app.post('/api/users/:id/request-generation', async (req, res) => {
   const userId = req.params.id;
   const { panels } = req.body; // [{ geneName, variants }, ...]
@@ -807,7 +858,11 @@ app.post('/api/users/:id/request-generation', async (req, res) => {
     }
 
     let reports = userRes.rows[0].reports || {};
-    const testNames = [];
+    let reportAnswers = userRes.rows[0].report_answers || {};
+    if (typeof reportAnswers === 'string') reportAnswers = JSON.parse(reportAnswers);
+
+    const testNamesAwaitingAnswers = [];
+    const testNamesGenerated = [];
 
     for (const { geneName, variants } of panels) {
       if (!reports[geneName]) {
@@ -820,22 +875,52 @@ app.post('/api/users/:id/request-generation', async (req, res) => {
       // Reset AI report since we are requesting a new one
       delete reports[geneName].ai_report;
 
-      testNames.push(geneName);
+      // If the patient already answered this panel's questionnaire before the
+      // lab finished, generate the report right now in the background instead
+      // of waiting on the patient to submit anything else.
+      const phenotypeResponses = reportAnswers[geneName];
+      const rawAnswers = reportAnswers[`${geneName}_custom`];
+      const genResult = await generateAiReportForPanel(geneName, reports[geneName], phenotypeResponses, rawAnswers);
+      if (genResult) {
+        reports[geneName].ai_report = genResult.ai_report;
+        reports[geneName].generated_at = genResult.generated_at;
+        testNamesGenerated.push(geneName);
+      } else {
+        testNamesAwaitingAnswers.push(geneName);
+      }
     }
 
-    // Update user to set survey_requested to true
+    const panelsWithVariants = Object.values(reports).filter(r => r && r.variants);
+    const allGenerated = panelsWithVariants.length > 0 && panelsWithVariants.every(r => r.ai_report);
+    const stillPending = panelsWithVariants.some(r => !r.ai_report);
+
+    // Update user to reflect the new variants/report state
     const updateQuery = `
       UPDATE users
-      SET reports = $1, survey_requested = TRUE
-      WHERE id = $2
+      SET reports = $1, survey_requested = $2, report_generated = $3
+      WHERE id = $4
       RETURNING *
     `;
-    const updateRes = await pool.query(updateQuery, [reports, userId]);
+    const updateRes = await pool.query(updateQuery, [reports, stillPending, allGenerated, userId]);
     const updatedUser = updateRes.rows[0];
 
-    // Trigger a single combined notification for every panel submitted in this batch
-    sendCollectAnswersEmail(updatedUser, testNames);
-    sendWhatsAppSurveyRequested(updatedUser, testNames);
+    // Panels still missing answers get the "please answer" nudge; panels whose
+    // answers were already on file just got their report generated, so those
+    // get the "report ready" notification instead.
+    if (testNamesAwaitingAnswers.length > 0) {
+      sendCollectAnswersEmail(updatedUser, testNamesAwaitingAnswers);
+      sendWhatsAppSurveyRequested(updatedUser, testNamesAwaitingAnswers);
+    }
+    if (testNamesGenerated.length > 0) {
+      try {
+        const { sendWhatsAppReportGenerated } = require('./whatsapp');
+        const { sendReportGeneratedEmail } = require('./mailer');
+        for (const testName of testNamesGenerated) {
+          await sendWhatsAppReportGenerated({ ...updatedUser }, testName);
+          await sendReportGeneratedEmail({ ...updatedUser }, testName);
+        }
+      } catch (e) { console.error("Notification failed:", e); }
+    }
 
     res.json({
       success: true,
@@ -974,7 +1059,7 @@ app.post('/api/users/:id/upload-report', upload.single('report'), async (req, re
     // Fetch updated user
     const updatedUserRes = await pool.query(`
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested, 
-             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at
       FROM users WHERE id = $1
     `, [userId]);
 
@@ -1098,7 +1183,7 @@ app.put('/api/users/:id/verify-report', async (req, res) => {
     // Fetch updated user
     const updatedUserRes = await pool.query(`
       SELECT id, username, full_name, email, phone, age, gender, gene_type, phenotypic_analysis, survey_requested,
-             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, status_timestamps, created_at
+             request_status, sample_collected, sample_received, report_uploaded, report_generated, report_verified, report_url, reports, report_answers, status_timestamps, created_at
       FROM users WHERE id = $1
     `, [userId]);
 
@@ -1205,47 +1290,11 @@ app.post('/api/users/:id/report-answers', express.json(), async (req, res) => {
     const panelData = reports[testName];
 
     let anyGenerated = false;
-    if (panelData && panelData.variants && !panelData.ai_report) {
-      let category = '';
-      if (testName.toLowerCase().includes('caffeine')) category = 'caffeine';
-      else if (testName.toLowerCase().includes('muscle')) category = 'muscle';
-      else if (testName.toLowerCase().includes('hair')) category = 'hair';
-      else category = 'caffeine';
-
-      console.log(`Triggering AI generation for ${category}...`);
-
-      const payload = {
-        category,
-        genes: panelData.variants,
-        phenotype_responses: mappedAnswers, // Send ONLY the mapped answers for this specific test
-        lifestyle_context: {
-          user_type: "explorer",
-          raw_answers: rawAnswers || []
-        }
-      };
-      console.log('Sending payload to Python backend:', JSON.stringify(payload));
-
-      const url = process.env.PYTHON_BACKEND_URL ? `${process.env.PYTHON_BACKEND_URL}/dynamic/analyze-category` : 'http://127.0.0.1:8000/dynamic/analyze-category';
-      try {
-        const aiResponse = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        if (aiResponse.ok) {
-          const aiData = await aiResponse.json();
-          reports[testName].ai_report = aiData.results || aiData;
-          reports[testName].generated_at = new Date().toISOString();
-          console.log(`AI generation successful for ${category}.`);
-          anyGenerated = true;
-        } else {
-          const errorText = await aiResponse.text();
-          console.error(`AI generation failed for ${category}: ${aiResponse.status} ${aiResponse.statusText} - ${errorText}`);
-        }
-      } catch (err) {
-        console.error(`AI generation request failed for ${category}:`, err);
-      }
+    const genResult = await generateAiReportForPanel(testName, panelData, mappedAnswers, rawAnswers);
+    if (genResult) {
+      reports[testName].ai_report = genResult.ai_report;
+      reports[testName].generated_at = genResult.generated_at;
+      anyGenerated = true;
     }
 
     if (anyGenerated) {

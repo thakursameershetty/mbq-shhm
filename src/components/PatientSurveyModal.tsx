@@ -21,10 +21,15 @@ interface PatientSurveyModalProps {
   onClose: () => void;
   userId: string | number;
   testName: string;
+  /** Genes the patient actually purchased for this panel — e.g. ['CYP1A2'] for a
+   * Lite option, or ['CYP1A2', 'ADORA2A'] for Pro. Narrows the question set to
+   * that gene's 5 questions (Lite) or both genes' 10 questions (Pro). When
+   * omitted, falls back to showing every question for the matched test. */
+  genes?: string[];
   onComplete: () => void;
 }
 
-export default function PatientSurveyModal({ isOpen, onClose, userId, testName, onComplete }: PatientSurveyModalProps) {
+export default function PatientSurveyModal({ isOpen, onClose, userId, testName, genes, onComplete }: PatientSurveyModalProps) {
   const [questions, setQuestions] = useState<SelectedQuestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -59,12 +64,21 @@ export default function PatientSurveyModal({ isOpen, onClose, userId, testName, 
         const sub1 = parseQ(test.subgene1_questions);
         const sub2 = parseQ(test.subgene2_questions);
 
-        sub1.forEach((q: Question, idx: number) => {
-          selectedQs.push({ ...q, test_name: test.test_name, subgene_name: test.subgene1_name, uniqueId: `${test.id}-1-${idx}` });
-        });
-        sub2.forEach((q: Question, idx: number) => {
-          selectedQs.push({ ...q, test_name: test.test_name, subgene_name: test.subgene2_name, uniqueId: `${test.id}-2-${idx}` });
-        });
+        // Lite purchases only cover one of the two subgenes — skip the other
+        // subgene's questions entirely rather than asking about an untested gene.
+        const geneSet = new Set((genes || []).map((g) => g.toUpperCase()));
+        const includeSubgene = (subgeneName: string) => geneSet.size === 0 || geneSet.has((subgeneName || '').toUpperCase());
+
+        if (includeSubgene(test.subgene1_name)) {
+          sub1.forEach((q: Question, idx: number) => {
+            selectedQs.push({ ...q, test_name: test.test_name, subgene_name: test.subgene1_name, uniqueId: `${test.id}-1-${idx}` });
+          });
+        }
+        if (includeSubgene(test.subgene2_name)) {
+          sub2.forEach((q: Question, idx: number) => {
+            selectedQs.push({ ...q, test_name: test.test_name, subgene_name: test.subgene2_name, uniqueId: `${test.id}-2-${idx}` });
+          });
+        }
       });
 
       setQuestions(selectedQs);

@@ -4,8 +4,9 @@ import { X, FileText, Activity, LogOut, AlertCircle, Sparkles, Users, ArrowLeft,
 import { OrderTracking } from '@/components/ui/order-tracking';
 import { useNavigate, Link } from 'react-router-dom';
 import { triggerHaptic } from '@/lib/utils';
-import { formatUserId, getGeneColor } from '@/lib/mbq';
+import { formatUserId, getGeneColor, getRequiredGenes } from '@/lib/mbq';
 import PatientSurveyModal from '@/components/PatientSurveyModal';
+import MyAnswersModal from '@/components/MyAnswersModal';
 import LifestyleModal from '@/components/LifestyleModal';
 import AIReportModal from '@/components/AIReportModal';
 import ReportViewerModal from '@/components/ReportViewerModal';
@@ -56,6 +57,7 @@ export default function PatientDashboardPage() {
   const [switchAccountsProfiles, setSwitchAccountsProfiles] = useState<any[]>([]);
   const [switchingAccountsLoading, setSwitchingAccountsLoading] = useState(false);
   const [surveyTestName, setSurveyTestName] = useState<string>('');
+  const [viewAnswersPanel, setViewAnswersPanel] = useState<string | null>(null);
 
   const navigate = useNavigate();
 
@@ -240,6 +242,15 @@ export default function PatientDashboardPage() {
                 View {geneName} Report
               </button>
             )}
+            {user.report_answers?.[`${geneName}_custom`] && (
+              <button
+                onClick={() => setViewAnswersPanel(geneName)}
+                className="flex items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#F0F0ED] text-[#1A1A19] rounded-full text-xs sm:text-sm font-medium hover:bg-[#E8E8E5] transition-colors shadow-sm cursor-pointer"
+              >
+                <ClipboardList size={16} />
+                My Answers
+              </button>
+            )}
           </div>
         ))
       ) : user.report_verified && user.report_url ? (
@@ -345,38 +356,87 @@ export default function PatientDashboardPage() {
         </motion.button>
       )}
 
-      {/* Questionnaire Retake Banners */}
-      {user.reports && Object.entries(user.reports).map(([panelName, panelData]: [string, any]) => {
-        if (panelData && panelData.variants && !panelData.ai_report) {
-          return (
-            <motion.div
-              key={panelName}
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 bg-amber-500 rounded-2xl p-6 sm:px-6 sm:py-4 w-full shadow-md cursor-pointer hover:shadow-lg transition-all"
-              onClick={() => {
-                setSurveyTestName(panelName);
-                setShowSurveyModal(true);
-              }}
-            >
-              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-4 w-full text-left">
-                <span className="bg-amber-700 text-white text-xs font-semibold px-4 py-1.5 rounded-full whitespace-nowrap shadow-sm mb-1 sm:mb-0">
-                  Action Required
-                </span>
-                <p className="text-sm font-medium text-white flex-1 mb-2 sm:mb-0">
-                  Please submit your Phenotypic Survey (10 questions) for {panelName} so that you can get your report
-                </p>
+      {/* Questionnaire banners — one per purchased panel (Caffeine Sensitivity /
+          Muscle Performance / Hair), driven by the patient's own purchase +
+          answer state rather than lab progress. Shows as soon as the request
+          is approved so the patient can answer before the lab even starts;
+          once answered, generation fires automatically in the background
+          (see request-generation / report-answers on the server) so this
+          only ever asks for input once per panel. */}
+      {user.request_status === 'accepted' && user.gene_type && (() => {
+        const requiredGenes = getRequiredGenes(user.gene_type);
+        const genesByPanel: Record<string, string[]> = {};
+        requiredGenes.forEach(({ panel, name }) => {
+          if (!genesByPanel[panel]) genesByPanel[panel] = [];
+          genesByPanel[panel].push(name);
+        });
+        const reportAnswers = user.report_answers || {};
+        const reports = user.reports || {};
+
+        return Object.entries(genesByPanel).map(([panelName, panelGenes]) => {
+          const alreadyAnswered = !!reportAnswers[panelName];
+          const panelData = reports[panelName];
+
+          if (!alreadyAnswered) {
+            return (
+              <motion.div
+                key={panelName}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 bg-amber-500 rounded-2xl p-6 sm:px-6 sm:py-4 w-full shadow-md cursor-pointer hover:shadow-lg transition-all"
+                onClick={() => {
+                  setSurveyTestName(panelName);
+                  setShowSurveyModal(true);
+                }}
+              >
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-4 w-full text-left">
+                  <span className="bg-amber-700 text-white text-xs font-semibold px-4 py-1.5 rounded-full whitespace-nowrap shadow-sm mb-1 sm:mb-0">
+                    Action Required
+                  </span>
+                  <p className="text-sm font-medium text-white flex-1 mb-2 sm:mb-0">
+                    Please submit your Phenotypic Survey ({panelGenes.length * 5} questions) for {panelName} so that you can get your report
+                  </p>
+                  <button
+                    className="inline-flex items-center gap-1 font-bold text-amber-700 bg-white pl-5 pr-4 py-2.5 sm:py-2 rounded-full hover:bg-white/90 transition-colors shadow-sm whitespace-nowrap shrink-0 self-end sm:self-auto"
+                  >
+                    Answer Now <span className="material-symbols-rounded text-[20px]" aria-hidden="true">chevron_right</span>
+                  </button>
+                </div>
+              </motion.div>
+            );
+          }
+
+          // Already answered — if the lab hasn't produced a report yet, show a
+          // quiet, non-actionable status instead of asking for input again.
+          if (!panelData || !panelData.ai_report) {
+            return (
+              <motion.div
+                key={panelName}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-6 flex items-center gap-3 bg-[#F4F4F2] border border-[#E8E8E5] rounded-2xl px-5 py-4"
+              >
+                <ClipboardList size={18} className="text-[#8B8B86] shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-[#5A5A55]">Your {panelName} answers are in</p>
+                  <p className="text-xs text-[#8B8B86] mt-0.5">
+                    We'll generate your report automatically as soon as the lab finishes processing your sample.
+                  </p>
+                </div>
                 <button
-                  className="inline-flex items-center gap-1 font-bold text-amber-700 bg-white pl-5 pr-4 py-2.5 sm:py-2 rounded-full hover:bg-white/90 transition-colors shadow-sm whitespace-nowrap shrink-0 self-end sm:self-auto"
+                  type="button"
+                  onClick={() => setViewAnswersPanel(panelName)}
+                  className="text-xs font-semibold text-[#6057D7] hover:text-[#4F46B8] transition-colors whitespace-nowrap shrink-0"
                 >
-                  Answer Now <span className="material-symbols-rounded text-[20px]" aria-hidden="true">chevron_right</span>
+                  View My Answers
                 </button>
-              </div>
-            </motion.div>
-          );
-        }
-        return null;
-      })}
+              </motion.div>
+            );
+          }
+
+          return null;
+        });
+      })()}
 
       {/* Null phenotypic data banner */}
       {!user.phenotypic_analysis?.personal_profile?.dailyActivity && (
@@ -662,9 +722,21 @@ export default function PatientDashboardPage() {
           onClose={() => setShowSurveyModal(false)}
           userId={user.id}
           testName={surveyTestName}
+          genes={getRequiredGenes(user.gene_type || '')
+            .filter((g) => g.panel === surveyTestName)
+            .map((g) => g.name)}
           onComplete={() => {
             refreshUser();
           }}
+        />
+      )}
+
+      {user && (
+        <MyAnswersModal
+          isOpen={!!viewAnswersPanel}
+          onClose={() => setViewAnswersPanel(null)}
+          panelName={viewAnswersPanel || ''}
+          rawAnswers={(viewAnswersPanel && user.report_answers?.[`${viewAnswersPanel}_custom`]) || []}
         />
       )}
 
