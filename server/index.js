@@ -110,6 +110,31 @@ app.get('/api/gemini-status', (_req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TEMPORARY diagnostic route - reports exactly what PYTHON_BACKEND_URL this
+// running instance sees, and attempts a live fetch to it, surfacing the real
+// underlying error (DNS/TLS/timeout/etc.) instead of the generic "fetch
+// failed" the /api/test/generate-report catch block swallows. Safe to expose
+// (no secrets - just a backend URL). Remove once the 500s are diagnosed.
+// ─────────────────────────────────────────────────────────────────────────────
+app.get('/api/debug/python-backend', async (_req, res) => {
+  const configuredUrl = process.env.PYTHON_BACKEND_URL || null;
+  const result = { configuredUrl };
+  if (configuredUrl) {
+    try {
+      const start = Date.now();
+      const r = await fetch(configuredUrl.replace(/\/$/, '') + '/');
+      result.reachable = true;
+      result.status = r.status;
+      result.ms = Date.now() - start;
+    } catch (err) {
+      result.reachable = false;
+      result.error = { name: err.name, message: err.message, cause: err.cause ? String(err.cause) : undefined };
+    }
+  }
+  res.json(result);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration Route
 // ─────────────────────────────────────────────────────────────────────────────
 
