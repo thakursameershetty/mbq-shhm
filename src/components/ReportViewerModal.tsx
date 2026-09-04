@@ -9,8 +9,13 @@ interface ReportViewerModalProps {
   geneVariants: any;
   testName: string;
   mbqId?: string;
+  patientName?: string | null;
   generatedAt?: string | null;
   gender?: string | null;
+  /** Whether per-page feedback must be given before the download unlocks. Defaults
+   * to true for the patient-facing dashboard; the admin verification portal passes
+   * false so staff can download straight away. */
+  requireFeedback?: boolean;
 }
 
 // Every template page is laid out at a fixed intrinsic size (matches the
@@ -49,7 +54,7 @@ const DislikeIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-export default function ReportViewerModal({ isOpen, onClose, reportData, geneVariants, testName, mbqId, generatedAt, gender }: ReportViewerModalProps) {
+export default function ReportViewerModal({ isOpen, onClose, reportData, geneVariants, testName, mbqId, patientName, generatedAt, gender, requireFeedback = true }: ReportViewerModalProps) {
   const [reportHtml, setReportHtml] = useState<string | null>(null);
   const [scale, setScale] = useState(1);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -90,7 +95,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
   // Guards against briefly re-prompting for a page's feedback while the fetch of
   // previously-given feedback (below) is still in flight.
   const [feedbackLoaded, setFeedbackLoaded] = useState(false);
-  const hasAllFeedback = totalPages > 0 && Object.keys(pageFeedbacks).length >= totalPages;
+  const hasAllFeedback = !requireFeedback || (totalPages > 0 && Object.keys(pageFeedbacks).length >= totalPages);
 
   // Download countdown / "what's next" interest-collection flow.
   const [showDownloadFlow, setShowDownloadFlow] = useState(false);
@@ -111,6 +116,12 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
   // was closed partway through) so those pages aren't asked again.
   useEffect(() => {
     if (!isOpen || !testName || !mbqId) return;
+    if (!requireFeedback) {
+      // Admin portal: skip the feedback fetch/gate entirely so Next Page and
+      // Download are never blocked waiting on it.
+      setFeedbackLoaded(true);
+      return;
+    }
     setFeedbackLoaded(false);
     fetch(`/api/test/feedback?test_name=${encodeURIComponent(testName)}&mbq_id=${encodeURIComponent(mbqId)}`)
       .then(res => res.json())
@@ -128,7 +139,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
       })
       .catch(err => console.error('Failed to load existing feedback:', err))
       .finally(() => setFeedbackLoaded(true));
-  }, [isOpen, testName, mbqId]);
+  }, [isOpen, testName, mbqId, requireFeedback]);
 
   // Load any interest the user already recorded (in a previous report's download flow,
   // possibly) for the upcoming tests, so the same choices don't need repeating.
@@ -1240,6 +1251,33 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                               while (zoomCleanupFns.length) zoomCleanupFns.pop()();
                           };
 
+                          // html2canvas (used internally by html2pdf) doesn't support CSS
+                          // mask-image / -webkit-mask-image at all - it paints the Page 1 hero
+                          // photo fully opaque with a hard edge instead of the soft left-to-white
+                          // fade the live HTML preview shows via that mask. For capture only, lay
+                          // an ordinary white gradient div directly on top of the image (which
+                          // html2canvas paints fine) using the mask's own alpha stops inverted
+                          // onto opaque white, then remove it afterward via the same cleanup list
+                          // neutralizeZoom uses - the live preview's actual mask is never touched.
+                          const addHeroFadeOverlay = (scope) => {
+                              const heroImage = scope.querySelector ? scope.querySelector('#page1-hero-image') : null;
+                              if (!heroImage) return;
+                              const rect = heroImage.getBoundingClientRect();
+                              if (rect.width === 0 && rect.height === 0) return; // not actually visible
+
+                              const overlay = document.createElement('div');
+                              overlay.style.position = 'absolute';
+                              overlay.style.top = '0';
+                              overlay.style.right = '0';
+                              overlay.style.width = heroImage.style.width || (rect.width + 'px');
+                              overlay.style.height = rect.height + 'px';
+                              overlay.style.pointerEvents = 'none';
+                              overlay.style.background = 'linear-gradient(90deg, #fff 0%, #fff 4%, rgba(255,255,255,.92) 9%, rgba(255,255,255,.78) 14%, rgba(255,255,255,.58) 19%, rgba(255,255,255,.36) 25%, rgba(255,255,255,.16) 31%, rgba(255,255,255,0) 39%)';
+
+                              heroImage.parentNode.insertBefore(overlay, heroImage.nextSibling);
+                              zoomCleanupFns.push(() => { overlay.remove(); });
+                          };
+
                           const opt = {
                             margin:       0,
                             filename:     filename || 'report.pdf',
@@ -1272,8 +1310,10 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                                           innerRestore.style.minHeight = (window.__originalPageMinHeights && window.__originalPageMinHeights.get(innerRestore)) || '';
                                       }
                                       // Only the page about to be captured is visible, so its zoomed
-                                      // elements can only be measured (and thus wrapped) now.
+                                      // elements (and the hero image's mask, if this is Page 1) can
+                                      // only be measured/patched now.
                                       neutralizeZoom(pages[i]);
+                                      addHeroFadeOverlay(pages[i]);
                                       return new Promise(r => setTimeout(r, 100)); // allow DOM to settle
                                   });
 
@@ -1291,6 +1331,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                               pages.forEach(p => p.style.display = ''); // restore display
                             } else {
                               neutralizeZoom(container);
+                              addHeroFadeOverlay(container);
                               await html2pdf().set(opt).from(container).save();
                               restoreZoom();
                             }
@@ -1441,7 +1482,17 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
 
       if (mbqId) {
         // Catches "CQ ID: CQ-2024...", "MBQ ID: MBQ-2024...", etc. in all templates (Caffeine, Muscle, Hair, etc.)
-        finalHtml = finalHtml.replace(/(?:CQ|MBQ|HQ)?\s*ID:\s*(?:CQ|MBQ|HQ)?-?\d{4}-\d{4}-\d{6}/g, `ID: ${mbqId}`);
+        // — replaces it on every page's footer in one pass since the placeholder text is
+        // identical across all 5 pages. Appends the patient's name alongside it (same footer
+        // slot) rather than touching each template's markup individually.
+        const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const footerIdText = patientName
+          ? `ID: ${mbqId} &bull; ${escapeHtml(patientName)}`
+          : `ID: ${mbqId}`;
+        // $ has special meaning as a String.replace replacement token (e.g. "$&") - escape any
+        // literal $ in the name/id so it can't be misinterpreted.
+        const safeFooterIdText = footerIdText.replace(/\$/g, '$$$$');
+        finalHtml = finalHtml.replace(/(?:CQ|MBQ|HQ)?\s*ID:\s*(?:CQ|MBQ|HQ)?-?\d{4}-\d{4}-\d{6}/g, safeFooterIdText);
       }
 
       setReportHtml(finalHtml);
@@ -1564,7 +1615,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                     {currentPageIndex + 1} / {totalPages}
                   </span>
 
-                  {feedbackLoaded && currentPageIndex === totalPages - 1 && !pageFeedbacks[currentPageIndex] ? (
+                  {requireFeedback && feedbackLoaded && currentPageIndex === totalPages - 1 && !pageFeedbacks[currentPageIndex] ? (
                     <button
                       onClick={() => {
                         setPendingNextIndex(null);
@@ -1580,9 +1631,10 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                       onClick={() => {
                         // Previously-answered pages (loaded from an earlier visit) skip
                         // straight ahead; only an unanswered page prompts for feedback.
+                        // Admin portal (requireFeedback=false) always skips straight ahead.
                         if (!feedbackLoaded) return;
                         if (currentPageIndex < totalPages - 1) {
-                          if (!pageFeedbacks[currentPageIndex]) {
+                          if (requireFeedback && !pageFeedbacks[currentPageIndex]) {
                             setPendingNextIndex(currentPageIndex + 1);
                             setShowFeedbackPrompt(true);
                           } else {

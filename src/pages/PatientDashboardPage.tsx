@@ -47,7 +47,7 @@ export default function PatientDashboardPage() {
   const [showSurveyModal, setShowSurveyModal] = useState(false);
   const [showLifestyleModal, setShowLifestyleModal] = useState(false);
   const [selectedAIReport, setSelectedAIReport] = useState<{ geneName: string, content: string } | null>(null);
-  const [viewReportData, setViewReportData] = useState<{ testName: string; reportData: any; variants: any; mbqId?: string; generatedAt?: string | null; gender?: string | null } | null>(null);
+  const [viewReportData, setViewReportData] = useState<{ testName: string; reportData: any; variants: any; mbqId?: string; patientName?: string | null; generatedAt?: string | null; gender?: string | null } | null>(null);
   const [fetchDataStatus, setFetchDataStatus] = useState<{ type: 'success' | 'error' | 'warning', message: string } | null>(null);
   const [hasMultipleProfiles, setHasMultipleProfiles] = useState(false);
   const [showSwabTutorial, setShowSwabTutorial] = useState(false);
@@ -235,7 +235,7 @@ export default function PatientDashboardPage() {
             )}
             {reportData.ai_report && (
               <button
-                onClick={() => setViewReportData({ testName: geneName, reportData: reportData.ai_report, variants: reportData.variants, mbqId: formatUserId(user.id, user.created_at), generatedAt: getReportGeneratedAt(reportData, user.status_timestamps?.generated), gender: user.gender })}
+                onClick={() => setViewReportData({ testName: geneName, reportData: reportData.ai_report, variants: reportData.variants, mbqId: formatUserId(user.id, user.created_at), patientName: user.full_name, generatedAt: getReportGeneratedAt(reportData, user.status_timestamps?.generated), gender: user.gender })}
                 className="flex items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#6057D7] text-white rounded-full text-xs sm:text-sm font-medium hover:bg-[#4F46B8] transition-colors shadow-sm cursor-pointer"
               >
                 <Sparkles size={16} />
@@ -644,7 +644,7 @@ export default function PatientDashboardPage() {
                       )}
                       {reportData.ai_report && (
                         <button
-                          onClick={() => setViewReportData({ testName: geneName, reportData: reportData.ai_report, variants: reportData.variants, mbqId: formatUserId(user.id, user.created_at), generatedAt: getReportGeneratedAt(reportData, user.status_timestamps?.generated), gender: user.gender })}
+                          onClick={() => setViewReportData({ testName: geneName, reportData: reportData.ai_report, variants: reportData.variants, mbqId: formatUserId(user.id, user.created_at), patientName: user.full_name, generatedAt: getReportGeneratedAt(reportData, user.status_timestamps?.generated), gender: user.gender })}
                           className="flex-1 py-3.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
                         >
                           <Sparkles size={18} />
@@ -841,6 +841,7 @@ export default function PatientDashboardPage() {
           geneVariants={viewReportData.variants}
           testName={viewReportData.testName}
           mbqId={viewReportData.mbqId}
+          patientName={viewReportData.patientName}
           generatedAt={viewReportData.generatedAt}
           gender={viewReportData.gender}
         />

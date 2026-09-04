@@ -26,6 +26,25 @@ const VARIANT_OPTIONS: Record<string, string[]> = {
   FGFR2: ['TT', 'GT', 'GG'],
 };
 
+// Every question's 3 options are seeded in the same fixed order (score 1, 0, -1 -
+// see server/createQuestionsTable.js), and each gene's 3 genotypes represent the
+// same dominant/heterozygous/recessive tiers - so "High"/"Neutral"/"Low" picks a
+// consistent tier across every question AND every gene, rather than the old
+// per-question/per-gene random pick (which could land on a mix of tiers and
+// produce an internally inconsistent-reading report). Note VARIANT_OPTIONS above
+// is the raw lab-entry dropdown order (not always High-to-Low - e.g. ACE lists
+// II first), so this maps genotypes explicitly by tier instead of by array index.
+type RandomizeLevel = 'high' | 'neutral' | 'low';
+const LEVEL_TO_OPTION_INDEX: Record<RandomizeLevel, number> = { high: 0, neutral: 1, low: 2 };
+const LEVEL_GENOTYPE: Record<string, Record<RandomizeLevel, string>> = {
+  CYP1A2: { high: 'AA', neutral: 'AC', low: 'CC' },
+  ADORA2A: { high: 'TT', neutral: 'TC', low: 'CC' },
+  ACTN3: { high: 'RR', neutral: 'RX', low: 'XX' },
+  ACE: { high: 'DD', neutral: 'ID', low: 'II' },
+  EDAR: { high: 'GG', neutral: 'AG', low: 'AA' },
+  FGFR2: { high: 'TT', neutral: 'GT', low: 'GG' },
+};
+
 interface SelectedQuestion extends Question {
   test_name: string;
   subgene_name: string;
@@ -190,12 +209,13 @@ export default function TestReportPage() {
     }
   };
 
-  const handleRandomize = () => {
+  const handleRandomize = (level: RandomizeLevel) => {
+    const optionIndex = LEVEL_TO_OPTION_INDEX[level];
     if (questions.length > 0) {
       setAnswers(prev => {
         const next = { ...prev };
         questions.forEach(q => {
-          next[q.uniqueId] = Math.floor(Math.random() * q.options.length);
+          next[q.uniqueId] = Math.min(optionIndex, q.options.length - 1);
         });
         return next;
       });
@@ -208,9 +228,9 @@ export default function TestReportPage() {
       setGeneVariants(prev => {
         const next = { ...prev };
         genesToRandomize.forEach(gene => {
-          const opts = VARIANT_OPTIONS[gene];
-          if (opts && opts.length > 0) {
-            next[gene] = opts[Math.floor(Math.random() * opts.length)];
+          const genotype = LEVEL_GENOTYPE[gene]?.[level];
+          if (genotype) {
+            next[gene] = genotype;
           }
         });
         return next;
@@ -521,14 +541,25 @@ export default function TestReportPage() {
             Answered: <span className="font-bold text-[#1A1A19]">{answeredQuestionIds.size}</span> / {questions.length}
           </span>
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleRandomize}
-              disabled={questions.length === 0}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border border-[#E8E8E5] text-[#1A1A19] hover:bg-[#F0F0ED] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Shuffle className="w-4 h-4" />
-              Randomize
-            </button>
+            <div className="relative">
+              <Shuffle className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-[#1A1A19]" />
+              <select
+                value=""
+                onChange={(e) => {
+                  const level = e.target.value as RandomizeLevel | '';
+                  if (level) handleRandomize(level);
+                  e.target.value = '';
+                }}
+                disabled={questions.length === 0}
+                className="appearance-none cursor-pointer flex items-center gap-2 pl-9 pr-8 py-2.5 rounded-xl font-bold text-sm border border-[#E8E8E5] text-[#1A1A19] bg-white hover:bg-[#F0F0ED] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value="" disabled>Randomize</option>
+                <option value="high">High</option>
+                <option value="neutral">Neutral</option>
+                <option value="low">Low</option>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#8B8B86]" />
+            </div>
             <button
               onClick={handleGenerate}
               disabled={!allAnswered || generating}
@@ -1527,6 +1558,34 @@ export default function TestReportPage() {
                               while (zoomCleanupFns.length) zoomCleanupFns.pop()();
                           };
 
+                          // html2canvas (used internally by html2pdf) doesn't support CSS
+                          // mask-image / -webkit-mask-image at all - it paints the Page 1 hero
+                          // photo fully opaque with a hard edge instead of the soft left-to-white
+                          // fade the live HTML preview shows via that mask. For capture only, lay
+                          // an ordinary white gradient div directly on top of the image (which
+                          // html2canvas paints fine) using the mask's own alpha stops inverted
+                          // onto opaque white, then remove it afterward via the same cleanup list
+                          // neutralizeZoom uses - the live preview's actual mask is never touched.
+                          // Mirrors ReportViewerModal.tsx.
+                          const addHeroFadeOverlay = (scope) => {
+                              const heroImage = scope.querySelector ? scope.querySelector('#page1-hero-image') : null;
+                              if (!heroImage) return;
+                              const rect = heroImage.getBoundingClientRect();
+                              if (rect.width === 0 && rect.height === 0) return; // not actually visible
+
+                              const overlay = document.createElement('div');
+                              overlay.style.position = 'absolute';
+                              overlay.style.top = '0';
+                              overlay.style.right = '0';
+                              overlay.style.width = heroImage.style.width || (rect.width + 'px');
+                              overlay.style.height = rect.height + 'px';
+                              overlay.style.pointerEvents = 'none';
+                              overlay.style.background = 'linear-gradient(90deg, #fff 0%, #fff 4%, rgba(255,255,255,.92) 9%, rgba(255,255,255,.78) 14%, rgba(255,255,255,.58) 19%, rgba(255,255,255,.36) 25%, rgba(255,255,255,.16) 31%, rgba(255,255,255,0) 39%)';
+
+                              heroImage.parentNode.insertBefore(overlay, heroImage.nextSibling);
+                              zoomCleanupFns.push(() => { overlay.remove(); });
+                          };
+
                           const opt = {
                             margin:       0,
                             filename:     filename || 'report.pdf',
@@ -1560,8 +1619,10 @@ export default function TestReportPage() {
                                           innerRestore.style.minHeight = (window.__originalPageMinHeights && window.__originalPageMinHeights.get(innerRestore)) || '';
                                       }
                                       // Only the page about to be captured is visible, so its zoomed
-                                      // elements can only be measured (and thus wrapped) now.
+                                      // elements (and the hero image's mask, if this is Page 1) can
+                                      // only be measured/patched now.
                                       neutralizeZoom(pages[i]);
+                                      addHeroFadeOverlay(pages[i]);
                                       return new Promise(r => setTimeout(r, 100)); // allow DOM to settle
                                   });
 
@@ -1579,6 +1640,7 @@ export default function TestReportPage() {
                               pages.forEach(p => p.style.display = ''); // restore display
                             } else {
                               neutralizeZoom(container);
+                              addHeroFadeOverlay(container);
                               await html2pdf().set(opt).from(container).save();
                               restoreZoom();
                             }
@@ -1601,7 +1663,9 @@ export default function TestReportPage() {
                     </script>
                   `;
 
-                  const now = new Date();
+                  // Fixed sample values for this QA page (not tied to a real patient/date) -
+                  // September 5th, 2026, 10:05 AM.
+                  const now = new Date(2026, 8, 5, 10, 5);
                   const formattedDate = now.toLocaleString('en-US', {
                     day: 'numeric',
                     month: 'short',
@@ -1610,6 +1674,8 @@ export default function TestReportPage() {
                     minute: '2-digit',
                     hour12: true
                   });
+                  const sampleMbqId = 'MBQ2026000';
+                  const sampleName = 'Sample Name';
 
                   const pageCount = (html.match(/data-screen-label=/g) || []).length;
                   setTotalPages(pageCount > 0 ? pageCount : 1);
@@ -1743,11 +1809,19 @@ export default function TestReportPage() {
                     </style>
                   `;
 
-                  const finalHtml = html
+                  let finalHtml = html
                     .replace('<head>', `<head><base href="${window.location.origin}/">\n${fontCss}`)
                     .replace('src="./support.js"', 'src="/templates/support.js"')
                     .replace(/dd mm yyyy/g, formattedDate)
                     .replace('</body>', scriptString + '\n' + carouselScript + '\n</body>');
+
+                  // Catches "CQ ID: CQ-2024...", "MBQ ID: MBQ-2024...", etc. in all templates
+                  // (Caffeine, Muscle, Hair) - replaces every page's footer in one pass and
+                  // appends the sample name alongside it. Mirrors ReportViewerModal.tsx.
+                  finalHtml = finalHtml.replace(
+                    /(?:CQ|MBQ|HQ)?\s*ID:\s*(?:CQ|MBQ|HQ)?-?\d{4}-\d{4}-\d{6}/g,
+                    `ID: ${sampleMbqId} &bull; ${sampleName}`
+                  );
 
                   setReportHtml(finalHtml);
                 } catch (err) {
