@@ -1012,7 +1012,7 @@ app.post('/api/users/:id/upload-report', upload.single('report'), async (req, re
     const genotypeData = genotypes && geneName ? { genotype: genotypes[geneName] } : {};
 
     try {
-      const pythonRes = await fetch(process.env.PYTHON_BACKEND_URL ? `${process.env.PYTHON_BACKEND_URL}/analyze-genomic` : 'http://localhost:8080/analyze-genomic', {
+      const pythonRes = await fetch(process.env.PYTHON_BACKEND_URL ? `${process.env.PYTHON_BACKEND_URL}/analyze-genomic` : 'http://127.0.0.1:8000/analyze-genomic', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -1621,7 +1621,7 @@ app.post('/api/test/generate-report', async (req, res) => {
     console.log(`Sending request to Python backend for category: ${category}`);
 
     // Call Python backend
-    const url = process.env.PYTHON_BACKEND_URL ? `${process.env.PYTHON_BACKEND_URL}/dynamic/analyze-category` : 'http://127.0.0.1:8080/dynamic/analyze-category';
+    const url = process.env.PYTHON_BACKEND_URL ? `${process.env.PYTHON_BACKEND_URL}/dynamic/analyze-category` : 'http://127.0.0.1:8000/dynamic/analyze-category';
     const response = await fetch(url, {
       method: 'POST',
       headers: {
