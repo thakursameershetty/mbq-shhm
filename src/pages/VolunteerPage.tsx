@@ -93,11 +93,11 @@ export default function VolunteerPage() {
     }
   };
 
-  const filteredPatients = patients.filter((patient) => {
-    // Only patients whose request has been accepted by admin are visible for
-    // sample collection — pending/rejected registrations stay hidden here.
-    if (patient.request_status !== 'accepted') return false;
+  // Only patients whose request has been accepted by admin are relevant here —
+  // pending/rejected registrations stay hidden and must not affect tab counts.
+  const acceptedPatients = patients.filter((p) => p.request_status === 'accepted');
 
+  const filteredPatients = acceptedPatients.filter((patient) => {
     const searchTerms = searchQuery
       .split(',')
       .map(t => t.trim().toLowerCase())
@@ -190,7 +190,7 @@ export default function VolunteerPage() {
               className={`flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap ${statusFilter === 'all' ? 'bg-[#1A1A19] text-white shadow-sm' : 'text-[#8B8B86] hover:text-[#1A1A19]'
                 }`}
             >
-              All ({patients.length})
+              All ({acceptedPatients.length})
             </button>
             <button
               onClick={() => setStatusFilter('pending')}
@@ -199,7 +199,7 @@ export default function VolunteerPage() {
                 : 'text-[#8B8B86] hover:text-[#B87A00]'
                 }`}
             >
-              Pending ({patients.filter((p) => !p.sample_collected).length})
+              Pending ({acceptedPatients.filter((p) => !p.sample_collected).length})
             </button>
             <button
               onClick={() => setStatusFilter('collected')}
@@ -208,7 +208,7 @@ export default function VolunteerPage() {
                 : 'text-[#8B8B86] hover:text-[#027A48]'
                 }`}
             >
-              Collected ({patients.filter((p) => p.sample_collected).length})
+              Collected ({acceptedPatients.filter((p) => p.sample_collected).length})
             </button>
           </div>
         </div>

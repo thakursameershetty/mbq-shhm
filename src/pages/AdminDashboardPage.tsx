@@ -5,7 +5,6 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } 
 import QuestionsModal from '../components/QuestionsModal';
 import SmartBulkMatchModal from '../components/SmartBulkMatchModal';
 import { formatUserId, getRequiredGenes, getGeneColor, getGenePieColor } from '@/lib/mbq';
-import AdminNav from '@/components/AdminNav';
 
 export default function LabDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -104,7 +103,7 @@ export default function LabDashboard() {
   const handleSubmitAll = async (patient: any) => {
     const requiredGenes = getRequiredGenes(patient.gene);
     const patientVariants = selectedVariants[patient.id] || {};
-    
+
     // Ensure all genes across all panels are selected
     for (const rg of requiredGenes) {
       if (!patientVariants[rg.name]) {
@@ -307,8 +306,6 @@ export default function LabDashboard() {
       animate={{ opacity: 1 }}
       className="w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8 mx-auto"
     >
-      <AdminNav />
-
       {/* Header Section */}
       <div className="mb-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
         <div className="space-y-2 lg:flex-1 shrink-0">
