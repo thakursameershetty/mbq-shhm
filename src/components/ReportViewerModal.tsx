@@ -763,7 +763,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                             if (gridContainer && gridContainer.style.display === 'grid') {
                                 const titleDiv = gridContainer.previousElementSibling;
                                 if (titleDiv) {
-                                    const traits = data.page_1.key_traits.split('•').map(t => t.trim()).filter(Boolean);
+                                    const traits = data.page_1.key_traits.split(/[•,]/).map(t => t.trim()).filter(Boolean).map(t => t.charAt(0).toUpperCase() + t.slice(1));
                                     titleDiv.innerHTML = traits.map(t => '&bull; ' + t).join('<br/>');
                                     titleDiv.style.lineHeight = '1.6';
                                     titleDiv.style.textTransform = 'uppercase';
@@ -856,7 +856,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                             // preceding icon (a sibling of the span, not a child) isn't wiped out.
                             const keyTraitsSpan = document.querySelector('span#page1-key-traits');
                             if (keyTraitsSpan && data.page_1.key_traits) {
-                                const traits = data.page_1.key_traits.split('•').map(t => t.trim()).filter(Boolean);
+                                const traits = data.page_1.key_traits.split(/[•,]/).map(t => t.trim()).filter(Boolean).map(t => t.charAt(0).toUpperCase() + t.slice(1));
                                 keyTraitsSpan.innerHTML = traits.map(t => '&bull; ' + t).join('<br/>');
                                 keyTraitsSpan.style.fontWeight = '500';
                                 keyTraitsSpan.style.fontSize = '17px';
@@ -866,7 +866,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                             } else {
                                 const keyTraitsEl = document.getElementById('page1-key-traits');
                                 if (keyTraitsEl && data.page_1.key_traits) {
-                                    const traits = data.page_1.key_traits.split('•').map(t => t.trim()).filter(Boolean);
+                                    const traits = data.page_1.key_traits.split(/[•,]/).map(t => t.trim()).filter(Boolean).map(t => t.charAt(0).toUpperCase() + t.slice(1));
                                     keyTraitsEl.innerHTML = traits.map(t => '&bull; ' + t).join('<br/>');
                                     keyTraitsEl.style.fontWeight = '500';
                                     keyTraitsEl.style.fontSize = '17px';
@@ -907,7 +907,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                             // "BUILT FOR ..." summary in the share card, derived from key traits
                             const builtForEl = document.getElementById('page1-share-built-for');
                             if (builtForEl && data.page_1.key_traits) {
-                                const traits = data.page_1.key_traits.split('•').map(t => t.trim().toUpperCase()).filter(Boolean);
+                                const traits = data.page_1.key_traits.split(/[•,]/).map(t => t.trim().toUpperCase()).filter(Boolean);
                                 builtForEl.textContent = traits.join('. ') + '.';
                             }
                         }
@@ -979,6 +979,10 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                                     setText('page3-research-title-' + (i+1), item.title);
                                     setText('page3-research-desc-' + (i+1), item.description);
                                 });
+                            }
+                            const researchSubtitleEl = document.getElementById('page3-research-subtitle');
+                            if (researchSubtitleEl && genes.length) {
+                                researchSubtitleEl.textContent = '(About people with similar ' + genes.join(' and ') + ' variant' + (genes.length > 1 ? 's' : '') + ')';
                             }
                         }
 

@@ -113,7 +113,7 @@ const sendWhatsAppReportReady = async (user, testName) => {
 
 const sendWhatsAppSurveyRequested = async (user, testNames) => {
   if (!user || !user.phone) return;
-  await sendWhatsAppTemplate(user.phone, 'mbq_survey_requested', [
+  await sendWhatsAppTemplate(user.phone, 'mbq_shhm_survey_requested', [
     { type: 'text', text: buildNameWithTests(firstNameOf(user), testNames), parameter_name: 'name' }
   ]);
 };
