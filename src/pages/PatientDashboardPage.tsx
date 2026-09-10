@@ -6,7 +6,6 @@ import { useNavigate, Link } from 'react-router-dom';
 import { triggerHaptic } from '@/lib/utils';
 import { formatUserId, getGeneColor, getRequiredGenes } from '@/lib/mbq';
 import PatientSurveyModal from '@/components/PatientSurveyModal';
-import MyAnswersModal from '@/components/MyAnswersModal';
 import LifestyleModal from '@/components/LifestyleModal';
 import AIReportModal from '@/components/AIReportModal';
 import ReportViewerModal from '@/components/ReportViewerModal';
@@ -40,6 +39,18 @@ const formatIST = (dateInput?: string | number | Date | null, fallback: string =
 const getReportGeneratedAt = (reportData: any, fallback?: string | null) =>
   reportData?.generated_at || reportData?.ai_report?._meta?.merged_at || fallback || null;
 
+// rawAnswers entries are stored as "Question: <q> | Answer: <a>" strings (see
+// PatientSurveyModal's submit payload) - split back into pairs for display.
+// Mirrors MyAnswersModal.tsx's parseAnswer, now that answers render inline as
+// cards on the dashboard instead of behind a "My Answers" button + modal.
+const parseAnswer = (entry: string) => {
+  const [qPart, aPart] = entry.split('| Answer:');
+  return {
+    question: (qPart || '').replace('Question:', '').trim(),
+    answer: (aPart || '').trim(),
+  };
+};
+
 export default function PatientDashboardPage() {
   const [user, setUser] = useState<any>(null);
   const [showTracking, setShowTracking] = useState(false);
@@ -57,7 +68,6 @@ export default function PatientDashboardPage() {
   const [switchAccountsProfiles, setSwitchAccountsProfiles] = useState<any[]>([]);
   const [switchingAccountsLoading, setSwitchingAccountsLoading] = useState(false);
   const [surveyTestName, setSurveyTestName] = useState<string>('');
-  const [viewAnswersPanel, setViewAnswersPanel] = useState<string | null>(null);
 
   const navigate = useNavigate();
 
@@ -242,15 +252,6 @@ export default function PatientDashboardPage() {
                 View {geneName} Report
               </button>
             )}
-            {user.report_answers?.[`${geneName}_custom`] && (
-              <button
-                onClick={() => setViewAnswersPanel(geneName)}
-                className="flex items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#F0F0ED] text-[#1A1A19] rounded-full text-xs sm:text-sm font-medium hover:bg-[#E8E8E5] transition-colors shadow-sm cursor-pointer"
-              >
-                <ClipboardList size={16} />
-                My Answers
-              </button>
-            )}
           </div>
         ))
       ) : user.report_verified && user.report_url ? (
@@ -423,13 +424,6 @@ export default function PatientDashboardPage() {
                     We'll generate your report automatically as soon as the lab finishes processing your sample.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setViewAnswersPanel(panelName)}
-                  className="text-xs font-semibold text-[#6057D7] hover:text-[#4F46B8] transition-colors whitespace-nowrap shrink-0"
-                >
-                  View My Answers
-                </button>
               </motion.div>
             );
           }
@@ -533,6 +527,33 @@ export default function PatientDashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Submitted Answers — shown inline as cards, right below the gene data
+          above, instead of behind a "My Answers" button that opened a modal. */}
+      {Object.entries(user.report_answers || {})
+        .filter(([key, answers]) => key.endsWith('_custom') && Array.isArray(answers) && answers.length > 0)
+        .map(([key, answers]) => {
+          const geneName = key.replace(/_custom$/, '');
+          return (
+            <div key={key} className="bg-white/70 backdrop-blur-xl border border-white/60 p-6 rounded-[20px] shadow-[0_4px_20px_rgb(0,0,0,0.02)] mt-6">
+              <h3 className="text-[#8B8B86] text-xs font-semibold tracking-wider uppercase mb-4 flex items-center gap-2">
+                <ClipboardList size={14} />
+                {geneName} — Your Answers
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {(answers as string[]).map((entry, idx) => {
+                  const { question, answer } = parseAnswer(entry);
+                  return (
+                    <div key={idx} className="bg-[#F9F9F8] rounded-xl border border-[#E8E8E5] p-4">
+                      <p className="text-[#1A1A19] font-semibold text-xs mb-1.5">{idx + 1}. {question}</p>
+                      <p className="text-[#5A5A55] text-xs">{answer || '—'}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
 
       {/* Track Updates Modal */}
       <AnimatePresence>
@@ -731,14 +752,6 @@ export default function PatientDashboardPage() {
         />
       )}
 
-      {user && (
-        <MyAnswersModal
-          isOpen={!!viewAnswersPanel}
-          onClose={() => setViewAnswersPanel(null)}
-          panelName={viewAnswersPanel || ''}
-          rawAnswers={(viewAnswersPanel && user.report_answers?.[`${viewAnswersPanel}_custom`]) || []}
-        />
-      )}
 
       {user && (
         <LifestyleModal
