@@ -85,15 +85,16 @@ const sendWhatsAppOtp = async (phone, otp) => {
   await sendWhatsAppTemplate(phone, 'order_status', [otp, 'dummy2', 'dummy3', 'dummy4']);
 };
 
-// Uses the approved 'order_status' template (Meta Business Manager), whose body
-// takes 4 positional variables in this order: name, Volunteer ID, Selected Test, Username.
+// Uses the approved 'mbq_shhm_order_status' template (Meta Business Manager) -
+// the shhm-branded counterpart to mbq_tutorial's 'order_status', same body but
+// with named variables: name, name1 (Volunteer ID), name2 (Selected Test), name3 (Username).
 const sendWhatsAppSampleDispatched = async (user) => {
   if (!user || !user.phone) return;
-  await sendWhatsAppTemplate(user.phone, 'order_status', [
-    firstNameOf(user),
-    formatUserId(user.id, user.created_at),
-    user.gene_type || 'MyBodyQode Full Panel',
-    user.username
+  await sendWhatsAppTemplate(user.phone, 'mbq_shhm_order_status', [
+    { type: 'text', text: firstNameOf(user), parameter_name: 'name' },
+    { type: 'text', text: formatUserId(user.id, user.created_at), parameter_name: 'name1' },
+    { type: 'text', text: user.gene_type || 'MyBodyQode Full Panel', parameter_name: 'name2' },
+    { type: 'text', text: user.username, parameter_name: 'name3' }
   ]);
 };
 
@@ -106,7 +107,7 @@ const sendWhatsAppReportGenerated = async (user, testName) => {
 
 const sendWhatsAppReportReady = async (user, testName) => {
   if (!user || !user.phone) return;
-  await sendWhatsAppTemplate(user.phone, 'mbq_report_ready', [
+  await sendWhatsAppTemplate(user.phone, 'mbq_shhm_report_ready', [
     { type: 'text', text: buildNameWithTests(firstNameOf(user), testName), parameter_name: 'name' }
   ]);
 };
