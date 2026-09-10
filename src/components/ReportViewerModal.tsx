@@ -12,9 +12,9 @@ interface ReportViewerModalProps {
   patientName?: string | null;
   generatedAt?: string | null;
   gender?: string | null;
-  /** Whether per-page feedback must be given before the download unlocks. Defaults
-   * to true for the patient-facing dashboard; the admin verification portal passes
-   * false so staff can download straight away. */
+  /** Whether feedback must be given once, on the last page, before the download
+   * unlocks. Defaults to true for the patient-facing dashboard; the admin
+   * verification portal passes false so staff can download straight away. */
   requireFeedback?: boolean;
 }
 
@@ -85,7 +85,6 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
   const [currentFeedbackInput, setCurrentFeedbackInput] = useState('');
   const [selectedEmoji, setSelectedEmoji] = useState<string | null>(null);
   const [showTextarea, setShowTextarea] = useState(false);
-  const [pendingNextIndex, setPendingNextIndex] = useState<number | null>(null);
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
   const [iframeReady, setIframeReady] = useState(false);
   // Pages aren't all a uniform 1449px tall (some grow with content) — track the
@@ -95,7 +94,8 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
   // Guards against briefly re-prompting for a page's feedback while the fetch of
   // previously-given feedback (below) is still in flight.
   const [feedbackLoaded, setFeedbackLoaded] = useState(false);
-  const hasAllFeedback = !requireFeedback || (totalPages > 0 && Object.keys(pageFeedbacks).length >= totalPages);
+  // Only the last page's feedback is required (and only once) - not every page.
+  const hasAllFeedback = !requireFeedback || (totalPages > 0 && !!pageFeedbacks[totalPages - 1]);
 
   // Download countdown / "what's next" interest-collection flow.
   const [showDownloadFlow, setShowDownloadFlow] = useState(false);
@@ -636,13 +636,25 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                             });
                         })();
 
+                        // Must mirror the backend's authoritative_scientific_evidence selection
+                        // (mbq_backend/rag/report_guardrails.py): for a combined report that's 2
+                        // cards from the first gene then 1 from the second, NOT every reference
+                        // from both genes flattened together - otherwise this array misaligns
+                        // with page_2.scientific_evidence and the wrong PubMed record (title/
+                        // authors) gets stitched onto the right card's description below.
                         let allLinks = [];
                         if (data.per_gene_appendix) {
-                            genes.forEach(g => {
-                                if (data.per_gene_appendix[g] && data.per_gene_appendix[g].scientific_references) {
-                                    allLinks = allLinks.concat(data.per_gene_appendix[g].scientific_references);
-                                }
-                            });
+                            if (genes.length >= 2) {
+                                const gene1Refs = (data.per_gene_appendix[genes[0]] && data.per_gene_appendix[genes[0]].scientific_references) || [];
+                                const gene2Refs = (data.per_gene_appendix[genes[1]] && data.per_gene_appendix[genes[1]].scientific_references) || [];
+                                allLinks = [gene1Refs[0], gene1Refs[1], gene2Refs[0]];
+                            } else {
+                                genes.forEach(g => {
+                                    if (data.per_gene_appendix[g] && data.per_gene_appendix[g].scientific_references) {
+                                        allLinks = allLinks.concat(data.per_gene_appendix[g].scientific_references);
+                                    }
+                                });
+                            }
                         }
                         
                         const setText = (id, text) => {
@@ -874,7 +886,13 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                             }
 
                             setText('page1-tendency-description', data.page_1.tendency_description);
-                            
+
+                            const badgeEl = document.getElementById('page1-expression-badge');
+                            if (badgeEl && data.page_1.expression_badge) {
+                                badgeEl.textContent = data.page_1.expression_badge;
+                                badgeEl.style.display = 'block';
+                            }
+
                             if (data.page_1.what_this_means_for_you_cards) {
                                 data.page_1.what_this_means_for_you_cards.forEach((card, i) => {
                                     setText('page1-wtm-card-title-' + (i+1), card.title);
@@ -1533,17 +1551,13 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                   <button
                     onClick={() => {
                       if (!hasAllFeedback) {
-                        const missingIndex = Array.from({ length: totalPages }, (_, i) => i).find(i => !pageFeedbacks[i]);
-                        if (missingIndex !== undefined) {
-                          setCurrentPageIndex(missingIndex);
-                          setPendingNextIndex(null);
-                          setShowFeedbackPrompt(true);
-                        }
+                        setCurrentPageIndex(totalPages - 1);
+                        setShowFeedbackPrompt(true);
                         return;
                       }
                       setShowDownloadFlow(true);
                     }}
-                    title={hasAllFeedback ? undefined : 'Share your feedback on every page to unlock the download'}
+                    title={hasAllFeedback ? undefined : 'Share your feedback to unlock the download'}
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${hasAllFeedback
                       ? 'bg-[#1A1A19] text-white hover:bg-black'
                       : 'bg-[#F0F0ED] text-[#8B8B86] cursor-not-allowed'
@@ -1621,10 +1635,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
 
                   {requireFeedback && feedbackLoaded && currentPageIndex === totalPages - 1 && !pageFeedbacks[currentPageIndex] ? (
                     <button
-                      onClick={() => {
-                        setPendingNextIndex(null);
-                        setShowFeedbackPrompt(true);
-                      }}
+                      onClick={() => setShowFeedbackPrompt(true)}
                       className="flex items-center gap-1 sm:gap-1.5 shrink-0 whitespace-nowrap pl-3 pr-3 py-2 sm:pl-4 sm:pr-4 sm:py-2.5 bg-amber-500 shadow-lg rounded-full text-xs sm:text-sm font-bold text-white hover:bg-amber-600 transition-colors"
                     >
                       Give Feedback
@@ -1633,17 +1644,10 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                   ) : (
                     <button
                       onClick={() => {
-                        // Previously-answered pages (loaded from an earlier visit) skip
-                        // straight ahead; only an unanswered page prompts for feedback.
-                        // Admin portal (requireFeedback=false) always skips straight ahead.
-                        if (!feedbackLoaded) return;
+                        // Feedback is only asked for once, on the last page (see the branch
+                        // above) - navigating between pages is never gated on it.
                         if (currentPageIndex < totalPages - 1) {
-                          if (requireFeedback && !pageFeedbacks[currentPageIndex]) {
-                            setPendingNextIndex(currentPageIndex + 1);
-                            setShowFeedbackPrompt(true);
-                          } else {
-                            setCurrentPageIndex(currentPageIndex + 1);
-                          }
+                          setCurrentPageIndex(currentPageIndex + 1);
                         }
                       }}
                       disabled={currentPageIndex === totalPages - 1 || !feedbackLoaded}
@@ -1678,7 +1682,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                       className="bg-white rounded-2xl shadow-2xl p-6 w-[90%] max-w-[400px] flex flex-col items-center text-center"
                     >
                       <h4 className="text-lg font-bold text-[#1A1A19] mb-2">Your feedback helps.</h4>
-                      <p className="text-sm text-[#5c6473] mb-6">We are making our systems better, Please contribute your thoughts on Page {currentPageIndex + 1}.</p>
+                      <p className="text-sm text-[#5c6473] mb-6">We are making our systems better. Please share your thoughts on this report.</p>
 
                       <div className="flex gap-6 justify-center mb-6">
                         <button
@@ -1779,10 +1783,6 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                             setCurrentFeedbackInput('');
                             setSelectedEmoji(null);
                             setShowTextarea(false);
-                            if (pendingNextIndex !== null) {
-                              setCurrentPageIndex(pendingNextIndex);
-                              setPendingNextIndex(null);
-                            }
                           }}
                           className="px-6 py-2 bg-[#6057D7] hover:bg-[#4F46B8] text-white rounded-lg text-sm font-bold flex items-center gap-2 disabled:opacity-50"
                         >

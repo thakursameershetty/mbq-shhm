@@ -1567,6 +1567,9 @@ export default function AdminVerifyPage() {
                           }}
                         >
                           {opt.label}
+                          <span className={`ml-1 px-1 py-0.5 rounded text-[9px] uppercase tracking-wide ${opt.tier === 'pro' ? 'bg-indigo-100 text-indigo-600' : 'bg-[#E8E8E5] text-[#8B8B86]'}`}>
+                            {opt.tier}
+                          </span>
                           <Plus size={12} className="opacity-70" />
                         </span>
                       ))}

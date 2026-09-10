@@ -1,11 +1,30 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, ChevronDown, Activity, Sparkles, FileText, ArrowRight, X, Download, ChevronLeft, ChevronRight, Shuffle } from 'lucide-react';
+import { Loader2, ChevronDown, Sparkles, FileText, ArrowRight, X, Download, ChevronLeft, ChevronRight, Shuffle, Lightbulb, ImageIcon } from 'lucide-react';
 import FloatingChatbot from '../components/FloatingChatbot';
+
+// Every question's illustration lives at
+// src/assets/questionare-images/<subgene>/<category>-<subgene>-q<n>.png (n is
+// 1-based). Loading them all via import.meta.glob means a new image just has
+// to be dropped in the right folder - no import to add here by hand. Mirrors
+// PatientSurveyModal.tsx so this dev preview matches the patient-facing survey.
+const questionImageModules = import.meta.glob('../assets/questionare-images/*/*.png', {
+  eager: true,
+  import: 'default',
+}) as Record<string, string>;
+
+const QUESTION_IMAGES: Record<string, string> = {};
+for (const [path, src] of Object.entries(questionImageModules)) {
+  const match = path.match(/-([a-z0-9]+)-q(\d+)\.png$/i);
+  if (!match) continue;
+  const [, subgene, questionNumber] = match;
+  QUESTION_IMAGES[`${subgene.toUpperCase()}-${Number(questionNumber) - 1}`] = src;
+}
 
 interface Question {
   question: string;
   example: string;
+  image?: string;
   options: { text: string; score: number }[];
   weightage: number;
 }
@@ -71,7 +90,7 @@ export default function TestReportPage() {
   const [loadingQs, setLoadingQs] = useState(true);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [customAnswers, setCustomAnswers] = useState<{ [uniqueId: string]: string }>({});
-  const [expandedQs, setExpandedQs] = useState<Record<string, boolean>>({});
+  const [currentQIndex, setCurrentQIndex] = useState(0);
 
   const [generating, setGenerating] = useState(false);
   // Simulated 0-100 progress for the (single, un-instrumented) generate-report call -
@@ -108,6 +127,13 @@ export default function TestReportPage() {
     const t = tests.find(t => t.test_name === selectedTestName);
     if (t) setSingleGene(t.subgene1_name);
   }, [selectedTestName, tests]);
+
+  // The questionnaire is walked one question at a time - jump back to the
+  // first one whenever the underlying question set changes (test, mode, or
+  // which single gene is selected) so the step index can't point past the end.
+  useEffect(() => {
+    setCurrentQIndex(0);
+  }, [selectedTestName, testMode, singleGene]);
 
   useEffect(() => {
     const el = viewportRef.current;
@@ -190,10 +216,12 @@ export default function TestReportPage() {
         const sub2 = parseQ(test.subgene2_questions || "[]");
 
         sub1.forEach((q: Question, idx: number) => {
-          selectedQs.push({ ...q, test_name: test.test_name, subgene_name: test.subgene1_name, uniqueId: `${test.id}-1-${idx}` });
+          const image = QUESTION_IMAGES[`${test.subgene1_name}-${idx}`];
+          selectedQs.push({ ...q, image, test_name: test.test_name, subgene_name: test.subgene1_name, uniqueId: `${test.id}-1-${idx}` });
         });
         sub2.forEach((q: Question, idx: number) => {
-          selectedQs.push({ ...q, test_name: test.test_name, subgene_name: test.subgene2_name, uniqueId: `${test.id}-2-${idx}` });
+          const image = QUESTION_IMAGES[`${test.subgene2_name}-${idx}`];
+          selectedQs.push({ ...q, image, test_name: test.test_name, subgene_name: test.subgene2_name, uniqueId: `${test.id}-2-${idx}` });
         });
       });
 
@@ -343,19 +371,17 @@ export default function TestReportPage() {
   ]);
   const allAnswered = questions.length > 0 && answeredQuestionIds.size === questions.length;
   const currentTest = tests.find(t => t.test_name === selectedTestName);
+  const currentQuestion = questions[currentQIndex];
+  const isCurrentAnswered = currentQuestion ? answeredQuestionIds.has(currentQuestion.uniqueId) : false;
+  const isLastQuestion = currentQIndex === questions.length - 1;
+  const qProgressPct = questions.length > 0 ? ((currentQIndex + 1) / questions.length) * 100 : 0;
 
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-80px)] w-full max-w-7xl mx-auto px-4 gap-4 pb-6">
       {/* LEFT PANE - Questionnaire */}
       <div className="flex-1 bg-white rounded-3xl border border-[#E8E8E5] shadow-sm flex flex-col overflow-hidden">
         <div className="p-6 border-b border-[#E8E8E5] flex items-center gap-3 bg-[#F9F9F8]">
-          <Activity className="text-[#6057D7]" />
-          <div className="flex-1 flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-[#1A1A19]">Questionnaire Test</h2>
-              <p className="text-sm text-[#8B8B86]">Select test and variants to generate report</p>
-            </div>
-
+          <div className="flex-1 flex items-center justify-end">
             <div className="flex items-center gap-2">
               <select
                 value={selectedGender}
@@ -396,6 +422,19 @@ export default function TestReportPage() {
             </div>
           </div>
         </div>
+
+        {!loadingQs && questions.length > 0 && (
+          <div className="px-6 pt-4 bg-[#F9F9F8]">
+            <div className="h-1.5 w-full bg-[#E8E8E5] rounded-full overflow-hidden">
+              <motion.div
+                className="h-full bg-[#6057D7] rounded-full"
+                initial={false}
+                animate={{ width: `${qProgressPct}%` }}
+                transition={{ duration: 0.3 }}
+              />
+            </div>
+          </div>
+        )}
 
         {currentTest && testMode === 'single' && (
           <div className="px-6 py-4 border-b border-[#E8E8E5] bg-indigo-50/30 flex gap-6">
@@ -467,79 +506,98 @@ export default function TestReportPage() {
               No questions found for the selected test.
             </div>
           ) : (
-            <div className="space-y-6">
-              {questions.map((q, index) => (
-                <div key={q.uniqueId} className="bg-white rounded-2xl border border-[#E8E8E5] shadow-sm overflow-hidden">
-                  <div
-                    className="p-5 cursor-pointer hover:bg-[#F9F9F8] transition-colors"
-                    onClick={() => setExpandedQs(prev => ({ ...prev, [q.uniqueId]: prev[q.uniqueId] === false ? true : false }))}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <span className="text-xs font-bold text-[#6057D7] bg-indigo-50 px-2.5 py-1 rounded-md mb-2 inline-block">
-                          {q.test_name} - {q.subgene_name}
-                        </span>
-                        <h3 className="text-[#1A1A19] font-semibold text-[15px]">
-                          {index + 1}. {q.question}
-                        </h3>
-                      </div>
-                      <ChevronDown
-                        size={18}
-                        className={`text-[#8B8B86] shrink-0 mt-1 transition-transform duration-300 ${expandedQs[q.uniqueId] !== false ? 'rotate-180' : ''}`}
+            <div className="max-w-xl mx-auto">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={currentQuestion.uniqueId}
+                  initial={{ opacity: 0, x: 24 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -24 }}
+                  transition={{ duration: 0.25 }}
+                >
+                  <span className="text-xs font-bold text-[#6057D7] bg-indigo-50 px-2.5 py-1 rounded-md mb-4 inline-block">
+                    {currentQuestion.test_name} - {currentQuestion.subgene_name}
+                  </span>
+
+                  {/* Fixed height (not aspect-ratio) so every question's frame is the
+                      same size regardless of that image's own ratio, and object-contain
+                      so nothing is ever cropped - the source images range from 4:3 to 2:1. */}
+                  <div className="w-full h-44 sm:h-52 rounded-2xl bg-[#F2F2F0] border border-[#E8E8E5] flex items-center justify-center mb-5 overflow-hidden">
+                    {currentQuestion.image ? (
+                      <img src={currentQuestion.image} alt="" className="w-full h-full object-contain" />
+                    ) : (
+                      <ImageIcon className="w-10 h-10 text-[#C7C7C2]" />
+                    )}
+                  </div>
+
+                  <h3 className="text-[#1A1A19] font-bold text-lg mb-3">
+                    {currentQIndex + 1}. {currentQuestion.question}
+                  </h3>
+
+                  {currentQuestion.example && (
+                    <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-5">
+                      <Lightbulb className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                      <p className="text-sm text-amber-900 leading-relaxed">
+                        <span className="font-bold">Example: </span>
+                        {currentQuestion.example}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    {currentQuestion.options.map((opt, optIdx) => (
+                      <button
+                        key={optIdx}
+                        onClick={() => setAnswers(prev => ({ ...prev, [currentQuestion.uniqueId]: optIdx }))}
+                        className={`w-full text-left p-3.5 rounded-xl border transition-all flex items-center gap-3
+                          ${answers[currentQuestion.uniqueId] === optIdx
+                            ? 'border-[#6057D7] bg-indigo-50/40 text-[#1A1A19]'
+                            : 'border-[#E8E8E5] bg-white hover:border-[#D4D4CE] text-[#5A5A55]'
+                          }`}
+                      >
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0
+                          ${answers[currentQuestion.uniqueId] === optIdx ? 'border-[#6057D7]' : 'border-[#D4D4CE]'}`}
+                        >
+                          {answers[currentQuestion.uniqueId] === optIdx && <div className="w-2 h-2 bg-[#6057D7] rounded-full" />}
+                        </div>
+                        <span className="text-sm font-medium">{opt.text}</span>
+                      </button>
+                    ))}
+                    <div className="pt-2">
+                      <input
+                        type="text"
+                        value={customAnswers[currentQuestion.uniqueId] || ''}
+                        onChange={(e) => setCustomAnswers(prev => ({ ...prev, [currentQuestion.uniqueId]: e.target.value }))}
+                        placeholder="Any specific remarks or custom input..."
+                        className="w-full p-3 text-sm border border-[#E8E8E5] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#6057D7]/20 focus:border-[#6057D7] transition-all bg-white placeholder-[#B0B0AE] text-[#1A1A19]"
                       />
                     </div>
                   </div>
-
-                  <AnimatePresence>
-                    {expandedQs[q.uniqueId] !== false && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="px-5 pb-5"
-                      >
-                        <div className="space-y-2 mt-1 pt-3 border-t border-[#E8E8E5]">
-                          {q.options.map((opt, optIdx) => (
-                            <button
-                              key={optIdx}
-                              onClick={() => setAnswers(prev => ({ ...prev, [q.uniqueId]: optIdx }))}
-                              className={`w-full text-left p-3.5 rounded-xl border transition-all flex items-center gap-3
-                                ${answers[q.uniqueId] === optIdx
-                                  ? 'border-[#6057D7] bg-indigo-50/40 text-[#1A1A19]'
-                                  : 'border-[#E8E8E5] bg-white hover:border-[#D4D4CE] text-[#5A5A55]'
-                                }`}
-                            >
-                              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0
-                                ${answers[q.uniqueId] === optIdx ? 'border-[#6057D7]' : 'border-[#D4D4CE]'}`}
-                              >
-                                {answers[q.uniqueId] === optIdx && <div className="w-2 h-2 bg-[#6057D7] rounded-full" />}
-                              </div>
-                              <span className="text-sm font-medium">{opt.text}</span>
-                            </button>
-                          ))}
-                          <div className="pt-2">
-                            <input
-                              type="text"
-                              value={customAnswers[q.uniqueId] || ''}
-                              onChange={(e) => setCustomAnswers(prev => ({ ...prev, [q.uniqueId]: e.target.value }))}
-                              placeholder="Any specific remarks or custom input..."
-                              className="w-full p-3 text-sm border border-[#E8E8E5] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#6057D7]/20 focus:border-[#6057D7] transition-all bg-white placeholder-[#B0B0AE] text-[#1A1A19]"
-                            />
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              ))}
+                </motion.div>
+              </AnimatePresence>
             </div>
           )}
         </div>
 
-        <div className="p-4 border-t border-[#E8E8E5] bg-white flex justify-between items-center">
-          <span className="text-sm text-[#8B8B86]">
-            Answered: <span className="font-bold text-[#1A1A19]">{answeredQuestionIds.size}</span> / {questions.length}
-          </span>
+        <div className="p-4 border-t border-[#E8E8E5] bg-white flex justify-between items-center gap-3">
+          <button
+            onClick={() => setCurrentQIndex(i => Math.max(i - 1, 0))}
+            disabled={currentQIndex === 0}
+            className={`flex items-center gap-1 px-4 py-2 rounded-lg font-bold text-sm transition-all shrink-0
+              ${currentQIndex === 0 ? 'text-[#C7C7C2] cursor-not-allowed' : 'text-[#5A5A55] hover:bg-[#F0F0ED]'}`}
+          >
+            <ChevronLeft className="w-4 h-4" /> Back
+          </button>
+
+          <div className="flex flex-col items-center shrink-0">
+            <span className="text-sm font-bold text-[#1A1A19]">
+              Question {questions.length > 0 ? currentQIndex + 1 : 0} of {questions.length}
+            </span>
+            <span className="text-xs text-[#8B8B86]">
+              Answered: {answeredQuestionIds.size} / {questions.length}
+            </span>
+          </div>
+
           <div className="flex items-center gap-3">
             <div className="relative">
               <Shuffle className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-[#1A1A19]" />
@@ -561,16 +619,16 @@ export default function TestReportPage() {
               <ChevronDown className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#8B8B86]" />
             </div>
             <button
-              onClick={handleGenerate}
-              disabled={!allAnswered || generating}
+              onClick={() => setCurrentQIndex(i => Math.min(i + 1, questions.length - 1))}
+              disabled={isLastQuestion || !isCurrentAnswered}
               className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm transition-all
-                ${allAnswered
+                ${!isLastQuestion && isCurrentAnswered
                   ? 'bg-[#1A1A19] text-white hover:bg-black'
                   : 'bg-[#F0F0ED] text-[#A0A09D] cursor-not-allowed'
                 }`}
             >
-              {generating ? null : <Sparkles className="w-4 h-4" />}
-              {generating ? `Generating... ${Math.round(genProgress)}%` : 'Generate AI Report'}
+              Next
+              <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -586,7 +644,23 @@ export default function TestReportPage() {
               <p className="text-sm text-[#8B8B86]">Generated JSON output</p>
             </div>
           </div>
-          {reportResult && (
+          <div className="flex items-center gap-2">
+            {/* Lives here (not tied to the last question in the questionnaire) so
+                Randomize-filling every answer doesn't also require paging all the
+                way to the end just to generate. */}
+            <button
+              onClick={handleGenerate}
+              disabled={!allAnswered || generating}
+              className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors
+                ${allAnswered && !generating
+                  ? 'bg-[#1A1A19] text-white hover:bg-black'
+                  : 'bg-[#F0F0ED] text-[#A0A09D] cursor-not-allowed'
+                }`}
+            >
+              {generating ? null : <Sparkles className="w-4 h-4" />}
+              {generating ? `${Math.round(genProgress)}%` : 'Generate'}
+            </button>
+            {reportResult && (
             <button
               onClick={async () => {
                 try {
@@ -945,13 +1019,25 @@ export default function TestReportPage() {
                             });
                         })();
 
+                        // Must mirror the backend's authoritative_scientific_evidence selection
+                        // (mbq_backend/rag/report_guardrails.py): for a combined report that's 2
+                        // cards from the first gene then 1 from the second, NOT every reference
+                        // from both genes flattened together - otherwise this array misaligns
+                        // with page_2.scientific_evidence and the wrong PubMed record (title/
+                        // authors) gets stitched onto the right card's description below.
                         let allLinks = [];
                         if (data.per_gene_appendix) {
-                            genes.forEach(g => {
-                                if (data.per_gene_appendix[g] && data.per_gene_appendix[g].scientific_references) {
-                                    allLinks = allLinks.concat(data.per_gene_appendix[g].scientific_references);
-                                }
-                            });
+                            if (genes.length >= 2) {
+                                const gene1Refs = (data.per_gene_appendix[genes[0]] && data.per_gene_appendix[genes[0]].scientific_references) || [];
+                                const gene2Refs = (data.per_gene_appendix[genes[1]] && data.per_gene_appendix[genes[1]].scientific_references) || [];
+                                allLinks = [gene1Refs[0], gene1Refs[1], gene2Refs[0]];
+                            } else {
+                                genes.forEach(g => {
+                                    if (data.per_gene_appendix[g] && data.per_gene_appendix[g].scientific_references) {
+                                        allLinks = allLinks.concat(data.per_gene_appendix[g].scientific_references);
+                                    }
+                                });
+                            }
                         }
                         
                         const setText = (id, text) => {
@@ -1836,9 +1922,10 @@ export default function TestReportPage() {
               className="px-4 py-2 bg-[#6057D7] hover:bg-[#4F46B8] text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"
             >
               <Sparkles className="w-4 h-4" />
-              View Beautiful Report
+              View
             </button>
-          )}
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto bg-[#1A1A19] p-6 text-[#E8E8E5] font-mono text-sm">
