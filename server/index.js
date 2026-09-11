@@ -1328,6 +1328,17 @@ app.post('/api/users/:id/generate-report', express.json(), async (req, res) => {
     const rawAnswers = reportAnswers[`${testName}_custom`];
     const panelData = reports[testName];
 
+    // Clear any stale ai_report before regenerating, mirroring /request-generation.
+    // Without this, generateAiReportForPanel's early-return guard (ai_report already
+    // set) silently keeps whatever report was generated under the panel's *previous*
+    // gene selection (e.g. a Pro EDAR+FGFR2 report left in place after the panel was
+    // downgraded to a Lite FGFR2-only test), instead of regenerating it against the
+    // current variants.
+    if (panelData) {
+      delete panelData.ai_report;
+      delete panelData.generated_at;
+    }
+
     let anyGenerated = false;
     const genResult = await generateAiReportForPanel(testName, panelData, mappedAnswers, rawAnswers);
     if (genResult) {
