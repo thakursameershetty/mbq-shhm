@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, Activity, LogOut, AlertCircle, Sparkles, Users, ArrowLeft, ClipboardList } from 'lucide-react';
+import { X, FileText, Activity, LogOut, AlertCircle, Sparkles, Users, ArrowLeft, ClipboardList, Loader2, CheckCircle2 } from 'lucide-react';
 import { OrderTracking } from '@/components/ui/order-tracking';
 import { useNavigate, Link } from 'react-router-dom';
 import { triggerHaptic } from '@/lib/utils';
@@ -68,6 +68,21 @@ export default function PatientDashboardPage() {
   const [switchAccountsProfiles, setSwitchAccountsProfiles] = useState<any[]>([]);
   const [switchingAccountsLoading, setSwitchingAccountsLoading] = useState(false);
   const [surveyTestName, setSurveyTestName] = useState<string>('');
+  // AI report generation now runs as a second, separate request after the
+  // survey answers are saved (see PatientSurveyModal's onComplete below), so
+  // the modal isn't stuck spinning for however long the LLM call takes -
+  // instead this banner tracks it in the background while the dashboard
+  // stays usable.
+  const [generatingPanel, setGeneratingPanel] = useState<string | null>(null);
+  const [generatingProgress, setGeneratingProgress] = useState(0);
+  const generationIntervalRef = useRef<number | null>(null);
+  // The "Your report is ready!" banner (shown once a report is admin-verified)
+  // is meant to be a brief heads-up, not a permanent fixture - the "View
+  // {test} Report" button up top already covers ongoing access. Track which
+  // panels have already had their reveal-timer scheduled (so polling every 5s
+  // doesn't restart it) and which have timed out and should stop rendering.
+  const readyBannerScheduledRef = useRef<Set<string>>(new Set());
+  const [dismissedReadyBanners, setDismissedReadyBanners] = useState<Record<string, boolean>>({});
 
   const navigate = useNavigate();
 
@@ -111,6 +126,20 @@ export default function PatientDashboardPage() {
     }
   }, []);
 
+  // Whenever the 5s poll above picks up a newly-verified report, give its
+  // "ready" banner a one-time reveal window before it self-dismisses.
+  useEffect(() => {
+    const reports = user?.reports || {};
+    Object.entries(reports).forEach(([panelName, data]: [string, any]) => {
+      if (data?.verified && !readyBannerScheduledRef.current.has(panelName)) {
+        readyBannerScheduledRef.current.add(panelName);
+        setTimeout(() => {
+          setDismissedReadyBanners(prev => ({ ...prev, [panelName]: true }));
+        }, 10000);
+      }
+    });
+  }, [user?.reports]);
+
   const refreshUser = async () => {
     if (!user?.id) return;
     try {
@@ -122,6 +151,57 @@ export default function PatientDashboardPage() {
       }
     } catch (err) {
       console.error('Error refreshing profile:', err);
+    }
+  };
+
+  // Kicks off the actual AI report generation for a panel whose answers were
+  // just saved. The progress bar is simulated (eases toward 90%, then snaps
+  // to 100% once the real request resolves) since there's no live progress
+  // stream from the backend - this only reflects elapsed time, not real work.
+  const startGeneration = async (panelName: string) => {
+    if (!user?.id) return;
+    setGeneratingPanel(panelName);
+    setGeneratingProgress(0);
+    if (generationIntervalRef.current) window.clearInterval(generationIntervalRef.current);
+    // Eases toward 90% over roughly 30-40s (real generation is an LLM call,
+    // not instant) with a touch of random jitter per tick so it reads as
+    // organic progress rather than a mechanically smooth curve.
+    generationIntervalRef.current = window.setInterval(() => {
+      setGeneratingProgress(prev => {
+        if (prev >= 90) return prev;
+        const step = Math.max(0.3, (90 - prev) * 0.025) * (0.7 + Math.random() * 0.6);
+        return Math.min(90, prev + step);
+      });
+    }, 400);
+
+    try {
+      const res = await fetch(`/api/users/${user.id}/generate-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testName: panelName }),
+      });
+      const data = await res.json();
+      if (generationIntervalRef.current) {
+        window.clearInterval(generationIntervalRef.current);
+        generationIntervalRef.current = null;
+      }
+      setGeneratingProgress(100);
+      if (data.user) {
+        setUser(data.user);
+        localStorage.setItem('userProfile', JSON.stringify(data.user));
+      }
+      // Briefly hold at 100% before dismissing the banner, so it's actually
+      // visible rather than jumping straight past it.
+      await new Promise(resolve => setTimeout(resolve, 600));
+    } catch (err) {
+      console.error('Report generation failed:', err);
+    } finally {
+      if (generationIntervalRef.current) {
+        window.clearInterval(generationIntervalRef.current);
+        generationIntervalRef.current = null;
+      }
+      setGeneratingPanel(null);
+      setGeneratingProgress(0);
     }
   };
 
@@ -231,29 +311,29 @@ export default function PatientDashboardPage() {
         sortedReportEntries
           .filter(([, reportData]: [string, any]) => reportData.verified)
           .map(([geneName, reportData]: [string, any]) => (
-          <div key={geneName} className="flex gap-2">
-            {reportData.url && (
-              <a
-                href={reportData.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#027A48] text-white rounded-full text-xs sm:text-sm font-medium hover:bg-[#026c3f] transition-colors shadow-sm"
-              >
-                <FileText size={16} />
-                Legacy {geneName} PDF
-              </a>
-            )}
-            {reportData.ai_report && (
-              <button
-                onClick={() => setViewReportData({ testName: geneName, reportData: reportData.ai_report, variants: reportData.variants, mbqId: formatUserId(user.id, user.created_at), patientName: user.full_name, generatedAt: getReportGeneratedAt(reportData, user.status_timestamps?.generated), gender: user.gender })}
-                className="flex items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#6057D7] text-white rounded-full text-xs sm:text-sm font-medium hover:bg-[#4F46B8] transition-colors shadow-sm cursor-pointer"
-              >
-                <Sparkles size={16} />
-                View {geneName} Report
-              </button>
-            )}
-          </div>
-        ))
+            <div key={geneName} className="flex gap-2">
+              {reportData.url && (
+                <a
+                  href={reportData.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#027A48] text-white rounded-full text-xs sm:text-sm font-medium hover:bg-[#026c3f] transition-colors shadow-sm"
+                >
+                  <FileText size={16} />
+                  Legacy {geneName} PDF
+                </a>
+              )}
+              {reportData.ai_report && (
+                <button
+                  onClick={() => setViewReportData({ testName: geneName, reportData: reportData.ai_report, variants: reportData.variants, mbqId: formatUserId(user.id, user.created_at), patientName: user.full_name, generatedAt: getReportGeneratedAt(reportData, user.status_timestamps?.generated), gender: user.gender })}
+                  className="flex items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#6057D7] text-white rounded-full text-xs sm:text-sm font-medium hover:bg-[#4F46B8] transition-colors shadow-sm cursor-pointer"
+                >
+                  <Sparkles size={16} />
+                  View {geneName} Report
+                </button>
+              )}
+            </div>
+          ))
       ) : user.report_verified && user.report_url ? (
         <a
           href={user.report_url}
@@ -299,6 +379,38 @@ export default function PatientDashboardPage() {
           {dashboardActions}
         </div>
       </div>
+
+      {/* AI report generation banner - shown after a survey is submitted while
+          the report is generated in the background; the dashboard stays fully
+          usable in the meantime instead of being blocked by a modal spinner. */}
+      <AnimatePresence>
+        {generatingPanel && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mb-6 relative overflow-hidden rounded-2xl border border-[#6057D7]/20 bg-white"
+          >
+            <motion.div
+              className="absolute inset-y-0 left-0 bg-gradient-to-r from-[#6057D7] to-[#3FC2AC]"
+              style={{ opacity: 0.14 }}
+              initial={{ width: '0%' }}
+              animate={{ width: `${generatingProgress}%` }}
+              transition={{ duration: 0.3, ease: 'linear' }}
+            />
+            <div className="relative z-10 flex items-center justify-between gap-4 px-5 py-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <Loader2 size={18} className="text-[#6057D7] shrink-0 animate-spin" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-[#1A1A19] truncate">Generating your {generatingPanel} report…</p>
+                  <p className="text-xs text-[#8B8B86] mt-0.5">This runs in the background — feel free to keep using the dashboard.</p>
+                </div>
+              </div>
+              <span className="text-sm font-bold text-[#6057D7] tabular-nums shrink-0">{Math.round(generatingProgress)}%</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Fetch Data status toast */}
       <AnimatePresence>
@@ -423,6 +535,57 @@ export default function PatientDashboardPage() {
                   <p className="text-xs text-[#8B8B86] mt-0.5">
                     We'll generate your report automatically as soon as the lab finishes processing your sample.
                   </p>
+                </div>
+              </motion.div>
+            );
+          }
+
+          // Report exists but hasn't cleared admin review yet.
+          if (!panelData.verified) {
+            return (
+              <motion.div
+                key={panelName}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-6 flex items-center gap-3 bg-[#F4F4F2] border border-[#E8E8E5] rounded-2xl px-5 py-4"
+              >
+                <ClipboardList size={18} className="text-[#8B8B86] shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-[#5A5A55]">Your {panelName} report is generated</p>
+                  <p className="text-xs text-[#8B8B86] mt-0.5">
+                    It's waiting on a quick admin review — this usually takes an hour or two.
+                    We'll send you a message as soon as it's ready, so feel free to wait for that.
+                  </p>
+                </div>
+              </motion.div>
+            );
+          }
+
+          // Just cleared review - a brief, self-dismissing heads-up rather than
+          // a permanent banner, since the "View {test} Report" button up top
+          // already covers ongoing access to it.
+          if (!dismissedReadyBanners[panelName]) {
+            return (
+              <motion.div
+                key={panelName}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 bg-emerald-500 rounded-2xl p-6 sm:px-6 sm:py-4 w-full shadow-md"
+              >
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-4 w-full text-left">
+                  <span className="bg-emerald-700 text-white text-xs font-semibold px-4 py-1.5 rounded-full whitespace-nowrap shadow-sm mb-1 sm:mb-0 flex items-center gap-1.5">
+                    <CheckCircle2 size={14} /> Ready
+                  </span>
+                  <p className="text-sm font-medium text-white flex-1 mb-2 sm:mb-0">
+                    Your {panelName} report is ready to view
+                  </p>
+                  <button
+                    onClick={() => setViewReportData({ testName: panelName, reportData: panelData.ai_report, variants: panelData.variants, mbqId: formatUserId(user.id, user.created_at), patientName: user.full_name, generatedAt: getReportGeneratedAt(panelData, user.status_timestamps?.generated), gender: user.gender })}
+                    className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-white pl-5 pr-4 py-2.5 sm:py-2 rounded-full hover:bg-white/90 transition-colors shadow-sm whitespace-nowrap shrink-0 self-end sm:self-auto"
+                  >
+                    View Report <span className="material-symbols-rounded text-[20px]" aria-hidden="true">chevron_right</span>
+                  </button>
                 </div>
               </motion.div>
             );
@@ -651,29 +814,29 @@ export default function PatientDashboardPage() {
                   {sortedReportEntries
                     .filter(([, reportData]: [string, any]) => reportData.verified)
                     .map(([geneName, reportData]: [string, any]) => (
-                    <div key={geneName} className="flex flex-col sm:flex-row gap-2">
-                      {reportData.url && reportData.url !== '#' && (
-                        <a
-                          href={reportData.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 py-3.5 bg-[#027A48] hover:bg-[#026c3f] text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 text-center no-underline"
-                        >
-                          <FileText size={18} />
-                          View {geneName} PDF
-                        </a>
-                      )}
-                      {reportData.ai_report && (
-                        <button
-                          onClick={() => setViewReportData({ testName: geneName, reportData: reportData.ai_report, variants: reportData.variants, mbqId: formatUserId(user.id, user.created_at), patientName: user.full_name, generatedAt: getReportGeneratedAt(reportData, user.status_timestamps?.generated), gender: user.gender })}
-                          className="flex-1 py-3.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
-                        >
-                          <Sparkles size={18} />
-                          View {geneName} Report
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                      <div key={geneName} className="flex flex-col sm:flex-row gap-2">
+                        {reportData.url && reportData.url !== '#' && (
+                          <a
+                            href={reportData.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 py-3.5 bg-[#027A48] hover:bg-[#026c3f] text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 text-center no-underline"
+                          >
+                            <FileText size={18} />
+                            View {geneName} PDF
+                          </a>
+                        )}
+                        {reportData.ai_report && (
+                          <button
+                            onClick={() => setViewReportData({ testName: geneName, reportData: reportData.ai_report, variants: reportData.variants, mbqId: formatUserId(user.id, user.created_at), patientName: user.full_name, generatedAt: getReportGeneratedAt(reportData, user.status_timestamps?.generated), gender: user.gender })}
+                            className="flex-1 py-3.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
+                          >
+                            <Sparkles size={18} />
+                            View {geneName} Report
+                          </button>
+                        )}
+                      </div>
+                    ))}
                 </div>
               ) : (!user.reports || Object.keys(user.reports).length === 0) && user.report_verified && user.report_url ? (
                 <div className="mt-6 pt-4 border-t border-[#E8E8E5]">
@@ -748,6 +911,7 @@ export default function PatientDashboardPage() {
             .map((g) => g.name)}
           onComplete={() => {
             refreshUser();
+            startGeneration(surveyTestName);
           }}
         />
       )}

@@ -279,6 +279,8 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
       let templateName = 'caffeine';
       if (testName.toLowerCase().includes('muscle')) templateName = 'muscle';
       else if (testName.toLowerCase().includes('hair')) templateName = 'hair';
+      // Drives the WhatsApp/Instagram share text below - "Caffeine"/"Muscle"/"Hair".
+      const categoryLabel = templateName.charAt(0).toUpperCase() + templateName.slice(1);
 
       const htmlUrl = `/templates/${templateName}-sample.html`;
       const resHtml = await fetch(htmlUrl);
@@ -1152,7 +1154,7 @@ export default function ReportViewerModal({ isOpen, onClose, reportData, geneVar
                                       try {
                                           await navigator.share({
                                               title: 'My Body Qode',
-                                              text: 'Check out my personalized Body Qode report!',
+                                              text: "Check out My ${categoryLabel} Qode from MyBodyQode. What's your Qode?",
                                               files: [file]
                                           });
                                       } catch (err) {

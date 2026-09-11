@@ -727,6 +727,8 @@ export default function TestReportPage() {
               onClick={async () => {
                 try {
                   const testId = selectedTestName.split(' ')[0].toLowerCase();
+                  // Drives the WhatsApp/Instagram share text below - "Caffeine"/"Muscle"/"Hair".
+                  const categoryLabel = testId.charAt(0).toUpperCase() + testId.slice(1);
                   const res = await fetch(`/templates/${testId}-sample.html`);
                   if (!res.ok) throw new Error('Template not found');
                   let html = await res.text();
@@ -1590,7 +1592,7 @@ export default function TestReportPage() {
                                       try {
                                           await navigator.share({
                                               title: 'My Body Qode',
-                                              text: 'Check out my personalized Body Qode report!',
+                                              text: "Check out My ${categoryLabel} Qode from MyBodyQode. What's your Qode?",
                                               files: [file]
                                           });
                                       } catch (err) {
