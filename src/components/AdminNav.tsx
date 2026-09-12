@@ -5,6 +5,7 @@ const LINKS = [
   { to: '/volunteer', label: 'Volunteer' },
   { to: '/admin-verify', label: 'Verify Profiles' },
   { to: '/admin', label: 'Lab Dashboard' },
+  { to: '/queries', label: 'Queries' },
 ];
 
 export default function AdminNav() {
