@@ -46,6 +46,24 @@ export const GENE_CATALOG: GeneCategory[] = [
 // Flat list of every selectable option, for pages that just need "all 9".
 export const GENE_OPTIONS: GeneOption[] = GENE_CATALOG.flatMap((c) => c.options);
 
+// Options a new user can pick at registration: the primary Lite gene of each
+// category plus its Pro combo. The ADORA2A / ACE / EDAR-only Lite options are
+// no longer sold, but stay in GENE_CATALOG so admin/volunteer pages can still
+// show and edit existing users who bought them.
+const REGISTRATION_GENE_OPTIONS = new Set([
+  'Caffeine Metabolism (CYP1A2)',
+  'Caffeine Qode Pro (CYP1A2,ADORA2A)',
+  'Muscle Power (ACTN3)',
+  'Muscle Qode Pro (ACTN3,ACE)',
+  'Hair Thickness (FGFR2)',
+  'Hair Qode Pro (FGFR2,EDAR)',
+]);
+
+export const REGISTRATION_GENE_CATALOG: GeneCategory[] = GENE_CATALOG.map((c) => ({
+  ...c,
+  options: c.options.filter((o) => REGISTRATION_GENE_OPTIONS.has(o.label)),
+}));
+
 const GENE_VARIANTS: Record<string, string[]> = {
   CYP1A2: ['AA', 'AC', 'CC'],
   ADORA2A: ['TT', 'TC', 'CC'],

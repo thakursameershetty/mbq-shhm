@@ -4,7 +4,7 @@ import { ChevronDown, ArrowLeft, Loader2, CheckCircle2, AlertCircle, ScrollText,
 import { motion, AnimatePresence } from 'framer-motion';
 import { triggerHaptic } from '@/lib/utils';
 import { theme } from '../theme';
-import { GENE_CATALOG } from '@/lib/mbq';
+import { REGISTRATION_GENE_CATALOG } from '@/lib/mbq';
 
 // ── Terms & Conditions Modal ────────────────────────────────────────────────
 function TermsModal({
@@ -759,11 +759,11 @@ export default function RegisterPage() {
               <p className={theme.subheading}>Choose the test(s) your DNA sample will be analyzed for. You can select as many as you like.</p>
 
               <div className="text-left space-y-5 mb-2">
-                {GENE_CATALOG.map((category) => (
+                {REGISTRATION_GENE_CATALOG.map((category) => (
                   <div key={category.name}>
                     <h3 className="text-xs font-bold uppercase tracking-widest text-[#8B8B86] mb-2 pl-1">{category.name}</h3>
                     <div className="flex flex-col gap-2">
-                      {category.options.map((opt, optIdx) => {
+                      {category.options.map((opt) => {
                         const checked = selectedGenes.includes(opt.label);
                         return (
                           <label
@@ -787,7 +787,7 @@ export default function RegisterPage() {
                               </span>
                             ) : (
                               <span className="text-[9px] font-bold uppercase tracking-wider text-[#8B8B86] bg-[#8B8B86]/10 px-2 py-0.5 rounded-full shrink-0">
-                                Lite {optIdx + 1}
+                                Lite
                               </span>
                             )}
                           </label>
